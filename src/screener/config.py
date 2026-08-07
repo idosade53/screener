@@ -45,6 +45,13 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    # Optional shared secret echoed by Telegram in the X-Telegram-Bot-Api-Secret-Token header
+    # (set via setWebhook). When configured, the webhook Lambda rejects mismatching requests.
+    telegram_webhook_secret: str | None = None
+
+    # Nightly analytical export (architecture §9.4). Only read by the export Lambda.
+    export_bucket: str | None = None
+    export_key: str = "screener-latest.db"
 
     @field_validator("scan_times_et")
     @classmethod

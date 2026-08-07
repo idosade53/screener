@@ -5,8 +5,9 @@ order, M0–M7 — more granular than the PRD, matches the actual package layout
 
 Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 
-**Status: M0–M5 done and green; M7 (Lambda + DynamoDB) in progress — Stage 1 (DynamoDB
-repository adapter) landed, 125 tests green.** M6 in-process scheduling (M6T02–T04) is the RPi
+**Status: M0–M5 done and green; M7 (Lambda + DynamoDB) in progress — Stages 1–2 landed
+(DynamoDB adapter + 3 Lambda handlers + SSM secrets), 135 tests green. Remaining: Stage 3
+container image, Stage 4 Terraform + deploy.** M6 in-process scheduling (M6T02–T04) is the RPi
 target and is out of scope for the Lambda deployment (EventBridge replaces it). (M5 = command/
 dispatch logic; the live Telegram long-poll transport is `composition/bot_runner.py`.)
 
@@ -144,8 +145,14 @@ dispatch logic; the live Telegram long-poll transport is `composition/bot_runner
         (`tests/contract/test_dynamodb_repository.py`, 16 tests, no network). `boto3` runtime dep +
         `moto` dev dep added; `composition/wiring.py` builds the Dynamo table when
         `repository_backend == "dynamodb"` (`dynamodb_table`/`aws_region` in `config.py`).
-  - [ ] **Stage 2** `composition/lambda_scan.py`, `lambda_webhook.py`, `lambda_export.py` (+ SSM
-        secrets in the settings loader).
+  - [x] **Stage 2** Lambda composition roots (unit/integration-tested with fakes + moto, no
+        network): `composition/lambda_scan.py` (EventBridge `scan_type` → pipeline),
+        `lambda_webhook.py` (Function-URL Telegram receiver reusing `bot_runner._process`, with a
+        `X-Telegram-Bot-Api-Secret-Token` gate on top of the M5 chat allowlist), `lambda_export.py`
+        (full DynamoDB scan → FR-6 SQLite rebuild → atomic S3 swap, §9.4), and
+        `composition/secrets.py` (SSM Parameter Store overlay when `SCREENER_SSM_PREFIX` is set,
+        else plain `.env`). New `config.py` fields: `telegram_webhook_secret`, `export_bucket`,
+        `export_key`.
   - [ ] **Stage 3** container image (multi-stage Dockerfile, one image / three handlers, <300 MB).
   - [ ] **Stage 4** Terraform infra: DynamoDB 5/5 + billing alarm, ECR 2-image lifecycle, 3 Lambdas
         + least-privilege IAM, EventBridge Scheduler (ET cron), S3 export bucket. Scheduling is
