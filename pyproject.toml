@@ -56,3 +56,7 @@ testpaths = ["tests"]
 addopts = """-q \
   -p no:ament_copyright -p no:ament_flake8 -p no:ament_lint -p no:ament_pep257 \
   -p no:ament_xmllint -p no:launch_ros -p no:launch_testing"""
+filterwarnings = [
+    # exchange_calendars emits this on numpy 2; not our code.
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
+]
