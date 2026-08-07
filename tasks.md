@@ -7,8 +7,9 @@ Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 
 **Status: M0–M5 done and green; M7 (Lambda + DynamoDB) in progress — Stages 1–2 landed
 (DynamoDB adapter + 3 Lambda handlers + SSM secrets), 135 tests green; Stage 3 (Dockerfile +
-.dockerignore + deploy docs) built `linux/amd64` and RIE-smoke-tested (scan + webhook handlers).
-Remaining: Stage 4 Terraform + deploy.** M6 in-process scheduling (M6T02–T04) is the RPi
+.dockerignore + deploy docs) built `linux/amd64` and RIE-smoke-tested; Stage 4 Terraform (`infra/`)
+authored. Remaining: `terraform validate`/`apply` on a machine with Terraform + AWS creds, push
+image, set secrets, register webhook, observe 5 clean trading days.** M6 in-process scheduling (M6T02–T04) is the RPi
 target and is out of scope for the Lambda deployment (EventBridge replaces it). (M5 = command/
 dispatch logic; the live Telegram long-poll transport is `composition/bot_runner.py`.)
 
@@ -162,9 +163,17 @@ dispatch logic; the live Telegram long-poll transport is `composition/bot_runner
         response (+ proper error payload for a bad type), webhook processes an authorized `/list` and
         silently 200s an unauthorized chat. Image ≈1.06 GB (Lambda base + pandas/numpy dominate;
         within the 10 GB limit — trims noted in `docs/deploy.md`).
-  - [ ] **Stage 4** Terraform infra: DynamoDB 5/5 + billing alarm, ECR 2-image lifecycle, 3 Lambdas
-        + least-privilege IAM, EventBridge Scheduler (ET cron), S3 export bucket. Scheduling is
-        EventBridge here — the RPi APScheduler wiring (M6T02–T04) is **not** needed for this target.
+  - [~] **Stage 4** Terraform infra in `infra/` (authored; **not yet `terraform validate`d/applied**
+        — no Terraform binary in the authoring env): `dynamodb.tf` (5/5 provisioned + PITR),
+        `ecr.tf` (2-image lifecycle), `lambda.tf` (3 image functions off one image + webhook Function
+        URL), `scheduler.tf` (EventBridge Scheduler ET cron PRE/OPEN/CLOSE + daily export),
+        `s3.tf` (versioned export bucket), `ssm.tf` (secret placeholders, values set out-of-band),
+        `iam.tf` (per-function least-privilege + scheduler role), `monitoring.tf` ($1 billing alarm),
+        plus `outputs.tf`, `variables.tf`, `README.md` runbook. Scheduling is EventBridge here — the
+        RPi APScheduler wiring (M6T02–T04) is **not** needed for this target.
+  - [ ] **Deploy/verify** (needs AWS creds + Docker host): `terraform fmt/validate/apply`, push image,
+        set SSM secrets, register Telegram webhook, then observe 5 consecutive clean trading days
+        (M7T05).
 
 ---
 

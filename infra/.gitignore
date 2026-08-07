@@ -1,0 +1,10 @@
+# Terraform state may contain sensitive values — never commit it.
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json

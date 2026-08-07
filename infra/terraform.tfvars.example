@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and edit. All values have sensible defaults; override as needed.
+
+aws_region = "us-east-1"
+project    = "screener"
+image_tag  = "latest"
+
+# Keep in sync with each other. cron_* is in America/New_York.
+scan_times_et = "09:00,09:45,20:15"
+# cron_pre    = "cron(0 9 ? * MON-FRI *)"
+# cron_open   = "cron(45 9 ? * MON-FRI *)"
+# cron_close  = "cron(15 20 ? * MON-FRI *)"
+# cron_export = "cron(30 20 ? * MON-FRI *)"
+
+billing_alarm_threshold_usd = 1
+alarm_email                 = "" # e.g. "you@example.com" to get the $1 billing alert by email
