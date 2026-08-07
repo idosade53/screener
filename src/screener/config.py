@@ -40,7 +40,6 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
-    telegram_webhook_secret: str | None = None
 
     @field_validator("scan_times_et")
     @classmethod
