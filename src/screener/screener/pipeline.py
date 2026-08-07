@@ -100,6 +100,9 @@ class ScanPipeline:
             log.info("skip: scan %s already claimed", context.scan_id)
             return self._skipped(scan_type, now, trading_day, "already claimed")
 
+        # A missed earlier scan of the day surfaces here, on the first scan to run after the gap.
+        self._check_missed_scans(context)
+
         # ── Stage 3: LOAD UNIVERSE ────────────────────────────────────────────
         universe = [m.symbol for m in self._repo.get_universe()]
         if not universe:
@@ -144,11 +147,7 @@ class ScanPipeline:
             message = format_scan_message(
                 context=context, summary=summary, results=results, diff=diff
             )
-            try:
-                status = self._notifier.send(message)
-            except Exception:  # noqa: BLE001 — a failed alert never crashes the scan (FR-5)
-                log.exception("notifier raised; treating as FAILED")
-                status = DeliveryStatus.FAILED
+            status = self._send(message)
             self._repo.record_alert(context.scan_id, message, status)
 
         log.info(
@@ -392,11 +391,35 @@ class ScanPipeline:
         )
 
     # ---------------------------------------------------------------- helpers
-    def _notify_system(self, text: str) -> None:
+    def _send(self, message: str) -> DeliveryStatus:
         try:
-            self._notifier.send(f"{_SYSTEM_PREFIX} {text}")
-        except Exception:  # noqa: BLE001
-            log.exception("failed to send system alert")
+            return self._notifier.send(message)
+        except Exception:  # noqa: BLE001 — a failed alert never crashes the scan (FR-5)
+            log.exception("notifier raised; treating as FAILED")
+            return DeliveryStatus.FAILED
+
+    def _notify_system(self, text: str) -> None:
+        self._send(f"{_SYSTEM_PREFIX} {text}")
+
+    def _check_missed_scans(self, context: ScanContext) -> None:
+        """Emit ``⚠️ SYSTEM missed <TYPE>`` for any scheduled scan earlier in the day that
+        never ran (architecture §8.5 / failure taxonomy row 10). Only the first scan to run
+        after a gap reports it, so a missing PRE is flagged once — not again by CLOSE."""
+        if context.scan_type is ScanType.MANUAL:
+            return
+        times = self._cfg.scheduled_times
+        current_time = times.get(context.scan_type)
+        if current_time is None:
+            return
+
+        recorded_types = {s.scan_type for s in self._repo.scans_on(context.trading_day)}
+        for stype, t in times.items():
+            if t >= current_time or stype in recorded_types:
+                continue
+            # Dedupe: if a later-scheduled scan already ran, it has already flagged this gap.
+            if any(times.get(rt, t) > t for rt in recorded_types):
+                continue
+            self._notify_system(f"missed {stype.value}")
 
 
 def _result(symbol: str, status: SymbolStatus) -> SymbolScanResult:

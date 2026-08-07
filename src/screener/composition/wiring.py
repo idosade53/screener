@@ -10,6 +10,7 @@ from screener.adapters.calendar.xnys_calendar import XnysCalendar
 from screener.adapters.clock.system_clock import SystemClock
 from screener.adapters.market_data.yfinance_provider import YFinanceProvider
 from screener.adapters.notify.console_notifier import ConsoleNotifier
+from screener.adapters.notify.telegram_notifier import TelegramNotifier
 from screener.adapters.repository.sqlite_repository import SqliteScreenerRepository
 from screener.config import Settings, load_settings
 from screener.domain.errors import ConfigError
@@ -56,12 +57,20 @@ def build_application(settings: Settings | None = None) -> Application:
 
     criteria: list[Criterion] = [MA150ProximityCriterion(cfg.band_atr_mult)]
 
+    # Real Telegram delivery when credentials are configured; otherwise the console stand-in
+    # keeps CLI dry-runs working without a bot token (FR-5).
+    notifier: Notifier
+    if cfg.telegram_bot_token and cfg.telegram_chat_id:
+        notifier = TelegramNotifier(cfg.telegram_bot_token, cfg.telegram_chat_id)
+    else:
+        notifier = ConsoleNotifier()
+
     return Application(
         settings=cfg,
         repo=repo,
         provider=YFinanceProvider(),
         calendar=XnysCalendar(),
         clock=SystemClock(),
-        notifier=ConsoleNotifier(),
+        notifier=notifier,
         criteria=criteria,
     )

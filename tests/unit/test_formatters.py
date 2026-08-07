@@ -100,3 +100,39 @@ def test_no_footer_when_all_healthy() -> None:
     diff = Diff(current=frozenset({"AAPL"}), previous=frozenset({"AAPL"}), should_send=True)
     msg = format_scan_message(context=_ctx(), summary=summary, results=results, diff=diff)
     assert "⚠️" not in msg
+
+
+def _close_ctx() -> ScanContext:
+    return ScanContext(
+        scan_type=ScanType.CLOSE,
+        scan_id="2026-08-07T20:15Z#CLOSE",
+        ran_at=datetime(2026, 8, 8, 0, 15, tzinfo=UTC),
+        trading_day=date(2026, 8, 7),
+        indicator_asof=date(2026, 8, 7),
+        price_mode=PriceMode.OFFICIAL_CLOSE,
+        is_first_of_day=False,
+    )
+
+
+def test_close_message_carries_daily_heartbeat() -> None:
+    results = [_result("AAPL", SymbolStatus.OK, "198.40", "0.21", True)]
+    summary = ScanSummary(
+        scan_id="s", scan_type=ScanType.CLOSE, scheduled_at=_close_ctx().ran_at,
+        ran_at=_close_ctx().ran_at, trading_day=date(2026, 8, 7), status=ScanStatus.OK,
+        symbols_scanned=1, in_range=("AAPL",), error_symbols=(), insufficient_symbols=(),
+    )
+    diff = Diff(current=frozenset({"AAPL"}), previous=frozenset({"AAPL"}), should_send=True)
+    msg = format_scan_message(context=_close_ctx(), summary=summary, results=results, diff=diff)
+    assert "💓 Daily heartbeat" in msg
+
+
+def test_non_close_message_has_no_heartbeat() -> None:
+    results = [_result("AAPL", SymbolStatus.OK, "198.40", "0.21", True)]
+    summary = ScanSummary(
+        scan_id="s", scan_type=ScanType.OPEN, scheduled_at=_ctx().ran_at, ran_at=_ctx().ran_at,
+        trading_day=date(2026, 8, 7), status=ScanStatus.OK, symbols_scanned=1,
+        in_range=("AAPL",), error_symbols=(), insufficient_symbols=(),
+    )
+    diff = Diff(current=frozenset({"AAPL"}), previous=frozenset({"AAPL"}), should_send=True)
+    msg = format_scan_message(context=_ctx(), summary=summary, results=results, diff=diff)
+    assert "💓" not in msg

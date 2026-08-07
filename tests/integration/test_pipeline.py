@@ -207,6 +207,44 @@ def test_insufficient_history_is_reported_not_in_range(
     assert "Insufficient history: AAPL" in notifier.messages[-1]
 
 
+def test_missed_earlier_scan_is_reported(
+    repo: SqliteScreenerRepository, notifier: CollectingNotifier, settings: Settings
+) -> None:
+    repo.add_symbols(["AAPL"])
+    _seed_repo_history(repo, ["AAPL"], last=date(2026, 8, 6))
+    provider = FakeProvider()
+    provider.quotes = {"AAPL": Decimal("100")}
+
+    # OPEN 09:45 ET runs with no PRE (09:00) recorded for the day -> gap check fires.
+    open_ = _pipeline(repo, provider, notifier, datetime(2026, 8, 7, 13, 45, tzinfo=UTC), settings)
+    open_.run(ScanType.OPEN)
+
+    assert any("SYSTEM missed PRE" in m for m in notifier.messages)
+
+
+def test_missed_scan_not_reported_twice_across_the_day(
+    repo: SqliteScreenerRepository, notifier: CollectingNotifier, settings: Settings
+) -> None:
+    repo.add_symbols(["AAPL"])
+    _seed_repo_history(repo, ["AAPL"], last=date(2026, 8, 6))
+    provider = FakeProvider()
+    provider.quotes = {"AAPL": Decimal("100")}
+
+    # OPEN reports the missing PRE...
+    _pipeline(repo, provider, notifier, datetime(2026, 8, 7, 13, 45, tzinfo=UTC), settings).run(
+        ScanType.OPEN
+    )
+    # ...and the later CLOSE (which serves official closes) must not re-report it.
+    close = _pipeline(repo, provider, notifier, datetime(2026, 8, 8, 0, 15, tzinfo=UTC), settings)
+    from datetime import timedelta
+
+    start = date(2026, 8, 7) - timedelta(days=len(_FLAT) - 1)
+    provider.seed_bars("AAPL", make_bars(start, _FLAT))
+    close.run(ScanType.CLOSE)
+
+    assert sum("SYSTEM missed PRE" in m for m in notifier.messages) == 1
+
+
 def test_idempotent_claim_prevents_duplicate_run(
     repo: SqliteScreenerRepository, notifier: CollectingNotifier, settings: Settings
 ) -> None:
