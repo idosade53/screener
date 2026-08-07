@@ -5,7 +5,8 @@ order, M0–M7 — more granular than the PRD, matches the actual package layout
 
 Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 
-**Status: M0–M4 done and green (88 tests). M5–M7 not started.**
+**Status: M0–M5 done and green (106 tests). M6–M7 not started.** (M5 = command/dispatch
+logic only; the live Telegram long-poll transport that feeds it is M7T03.)
 
 ---
 
@@ -90,17 +91,27 @@ Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 
 ## M5 — Bot commands in
 
-- [ ] **M5T01** `bot/commands.py` — `/add`, `/remove`, `/list`, `/status`, `/scan`, `/help` (FR-1)
-- [ ] **M5T02** `bot/auth.py` — `TELEGRAM_CHAT_ID` allowlist; other chats ignored silently.
-      **Security-critical:** this allowlist must gate EVERY command before dispatch — without it
-      anyone who finds the bot can run `/scan`, `/add`, `/remove`.
-- [ ] **M5T03** `bot/dispatch.py` — update → command → response
-- [ ] **M5T04** Symbol validation regex `^[A-Z][A-Z0-9.\-]{0,9}$` applied at the bot boundary
-      (architecture §8.6) — note: already applied in `composition/cli.py::_normalise`, needs
-      reuse/relocation for the bot path
-- [ ] **M5T05** Universe cap (300) soft-guard on `/add` (FR-1)
-- [ ] **M5T06** Idempotent command handling for Telegram redelivery (`/add` twice = one symbol,
-      `/remove` of absent symbol = no-op) (architecture §8.4)
+- [x] **M5T01** `bot/commands.py` — `/add`, `/remove`, `/list`, `/status`, `/scan`, `/help` (FR-1).
+      Handlers take a narrow `bot/context.py::BotContext` (repo + settings + a `run_scan` callable),
+      not the composition `Application` — the import-linter `layers` contract puts `bot` below
+      `composition`, so a handler importing `Application` would be an upward-import build failure.
+- [x] **M5T02** `bot/auth.py::is_authorized` — allowlist = the configured `telegram_chat_id`
+      (single-operator Phase 1); `dispatch` returns `None` (silently ignored) for any other chat.
+      **Security-critical:** this gate runs FIRST in `dispatch`, before parsing/routing any command,
+      so `/scan`/`/add`/`/remove` are unreachable from an unauthorized chat.
+- [x] **M5T03** `bot/dispatch.py::dispatch(update, ctx)` — update → command → response; strips
+      `/` and any `@botname` suffix, unknown/free-text → help, never raises (handler errors →
+      apology reply, mirroring the notifier contract). Seam the M7 long-poll loop calls.
+- [x] **M5T04** Symbol validation relocated to `screener/symbols.py::normalise` (shared, returns
+      structured `valid`/`invalid` instead of stderr prints so the bot can report invalids in-reply);
+      `composition/cli.py::_normalise` now delegates to it (CLI behaviour unchanged).
+- [x] **M5T05** Universe cap soft-guard on `/add` — accepts up to `settings.universe_cap`
+      (was defined but **enforced nowhere** before M5), reports the overflow as "cap reached".
+- [x] **M5T06** Idempotent command handling — inherited from the repo (`add_symbols` re-activates,
+      `remove_symbol` soft-deletes); handlers report the effective outcome (added / already-present /
+      not-in-universe). Unit-tested in `tests/unit/test_bot.py`.
+- Composition seam: `composition/wiring.py::build_bot_context(app)` builds the `BotContext`
+  (`run_scan = lambda: app.pipeline().run(ScanType.MANUAL)`) for the future M7 transport.
 
 ## M6 — Calendar + scheduling
 
