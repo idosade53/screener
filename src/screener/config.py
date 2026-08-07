@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     provider: Literal["yfinance"] = "yfinance"
     db_path: str = "screener.db"
 
+    # DynamoDB backend (architecture §9.3 single table). Only read when
+    # repository_backend == "dynamodb"; region falls back to the standard AWS env vars.
+    dynamodb_table: str = "screener"
+    aws_region: str | None = None
+
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
 

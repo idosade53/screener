@@ -5,8 +5,10 @@ order, M0–M7 — more granular than the PRD, matches the actual package layout
 
 Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 
-**Status: M0–M5 done and green (106 tests). M6–M7 not started.** (M5 = command/dispatch
-logic only; the live Telegram long-poll transport that feeds it is M7T03.)
+**Status: M0–M5 done and green; M7 (Lambda + DynamoDB) in progress — Stage 1 (DynamoDB
+repository adapter) landed, 125 tests green.** M6 in-process scheduling (M6T02–T04) is the RPi
+target and is out of scope for the Lambda deployment (EventBridge replaces it). (M5 = command/
+dispatch logic; the live Telegram long-poll transport is `composition/bot_runner.py`.)
 
 ---
 
@@ -136,20 +138,27 @@ logic only; the live Telegram long-poll transport that feeds it is M7T03.)
       target)
 - [ ] **M7T04** Docker Compose deployment (PRD M7 DoD, target-agnostic per architecture §14 R3)
 - [ ] **M7T05** 5 consecutive clean trading days observed post-deploy
-- [ ] **M7T06** *(Lambda path, if pursued instead of/before RPi):* `composition/lambda_scan.py`,
-      `lambda_webhook.py`, `lambda_export.py`, container image + ECR lifecycle policy,
-      EventBridge Scheduler rules, DynamoDB table + `dynamodb_repository.py`
+- [ ] **M7T06** *(Lambda path — now the chosen Phase-1 target):* delivered in stages.
+  - [x] **Stage 1** `adapters/repository/dynamodb_repository.py` — full `ScreenerRepository` over
+        the §8.3 single table (`screener`); passes the shared `RepositoryContract` under moto
+        (`tests/contract/test_dynamodb_repository.py`, 16 tests, no network). `boto3` runtime dep +
+        `moto` dev dep added; `composition/wiring.py` builds the Dynamo table when
+        `repository_backend == "dynamodb"` (`dynamodb_table`/`aws_region` in `config.py`).
+  - [ ] **Stage 2** `composition/lambda_scan.py`, `lambda_webhook.py`, `lambda_export.py` (+ SSM
+        secrets in the settings loader).
+  - [ ] **Stage 3** container image (multi-stage Dockerfile, one image / three handlers, <300 MB).
+  - [ ] **Stage 4** Terraform infra: DynamoDB 5/5 + billing alarm, ECR 2-image lifecycle, 3 Lambdas
+        + least-privilege IAM, EventBridge Scheduler (ET cron), S3 export bucket. Scheduling is
+        EventBridge here — the RPi APScheduler wiring (M6T02–T04) is **not** needed for this target.
 
 ---
 
 ## Deferred by design (not a gap)
 
-- **DynamoDB repository adapter** — `composition/wiring.py` raises `ConfigError` for any backend
-  other than `sqlite`. This is an intentional current choice (SQLite-first), not an oversight: the
-  SQLite implementation already satisfies the same `ScreenerRepository` contract tests, and
-  architecture §8.5 "path 2" treats the SQLite file as the eventual RPi5 migration artefact
-  regardless. Add `dynamodb_repository.py` only if the Lambda deployment path (§8) is actually
-  pursued.
+- **DynamoDB repository adapter** — *no longer deferred.* The Lambda deployment path (§8) is now
+  being pursued, so `adapters/repository/dynamodb_repository.py` has landed (M7T06 Stage 1) and
+  `composition/wiring.py` selects it on `repository_backend == "dynamodb"`. SQLite remains the
+  RPi/local default and the §8.5 "path 2" migration artefact; both back the same contract suite.
 
 ## Not yet covered by any milestone above
 
