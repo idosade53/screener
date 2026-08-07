@@ -11,6 +11,7 @@ from screener.domain.models import (
     Diff,
     ScanContext,
     ScanSummary,
+    ScanType,
     SymbolScanResult,
     SymbolStatus,
 )
@@ -55,6 +56,10 @@ def format_scan_message(
     footer = _failure_footer(summary)
     if footer:
         lines.append(footer)
+
+    # The CLOSE message doubles as the daily proof-of-life heartbeat (FR-7).
+    if context.scan_type is ScanType.CLOSE:
+        lines.append("💓 Daily heartbeat")
 
     return "\n".join(lines)
 
