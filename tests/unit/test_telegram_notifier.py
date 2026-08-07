@@ -3,6 +3,10 @@ sleep are injected, so chunking, retry, and the never-raise contract are exercis
 
 from __future__ import annotations
 
+import logging
+
+import httpx
+
 from screener.adapters.notify.telegram_notifier import (
     TelegramNotifier,
     chunk_message,
@@ -98,3 +102,25 @@ def test_multi_chunk_all_delivered_is_sent() -> None:
 
     assert status is DeliveryStatus.SENT
     assert len(post.calls) == len(chunk_message(message))
+
+
+# ---- secret hygiene ----
+
+def test_token_never_appears_in_logs_on_failure(caplog) -> None:  # type: ignore[no-untyped-def]
+    """httpx errors can carry the request URL, which embeds the bot token in its path. The
+    notifier must log exception *types* only — never the exception object or traceback."""
+    token = "123456:AAABBBsecrettokenshouldnotleak"
+
+    def boom(url: str, payload: dict[str, object], timeout: float) -> int:
+        raise httpx.ConnectError(f"failed connecting to {url}")  # url embeds the token
+
+    notifier = TelegramNotifier(
+        token, "CHAT", post=boom, sleep=lambda _s: None, backoff=0.0, max_retries=2
+    )
+    with caplog.at_level(logging.DEBUG, logger="screener.telegram"):
+        status = notifier.send("hi")
+
+    assert status is DeliveryStatus.FAILED
+    assert caplog.records, "expected the failure to be logged"
+    assert token not in caplog.text  # the token must not leak, even at DEBUG
+    assert "ConnectError" in caplog.text  # type is logged, so the failure stays diagnosable

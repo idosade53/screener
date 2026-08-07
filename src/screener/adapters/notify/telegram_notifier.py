@@ -90,8 +90,10 @@ class TelegramNotifier:
                 if not self._send_chunk(chunk):
                     return DeliveryStatus.FAILED
             return DeliveryStatus.SENT
-        except Exception:  # noqa: BLE001 — a failed alert never crashes the scheduler (FR-5)
-            log.exception("telegram delivery failed unexpectedly")
+        except Exception as exc:  # noqa: BLE001 — a failed alert never crashes the scheduler (FR-5)
+            # Log the type only, never the exception/traceback: httpx errors can carry the
+            # request URL, which embeds the bot token in its path.
+            log.warning("telegram delivery failed unexpectedly: %s", type(exc).__name__)
             return DeliveryStatus.FAILED
 
     def _send_chunk(self, text: str) -> bool:
@@ -107,9 +109,13 @@ class TelegramNotifier:
                     attempt,
                     self._max_retries,
                 )
-            except Exception:  # noqa: BLE001 — retry, then give up; never propagate
-                log.exception(
-                    "telegram sendMessage raised (attempt %d/%d)", attempt, self._max_retries
+            except Exception as exc:  # noqa: BLE001 — retry, then give up; never propagate
+                # Type only — an httpx error's repr/traceback can leak the token-bearing URL.
+                log.warning(
+                    "telegram sendMessage raised %s (attempt %d/%d)",
+                    type(exc).__name__,
+                    attempt,
+                    self._max_retries,
                 )
             if attempt < self._max_retries:
                 self._sleep(self._backoff * attempt)

@@ -91,7 +91,9 @@ Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 ## M5 — Bot commands in
 
 - [ ] **M5T01** `bot/commands.py` — `/add`, `/remove`, `/list`, `/status`, `/scan`, `/help` (FR-1)
-- [ ] **M5T02** `bot/auth.py` — `TELEGRAM_CHAT_ID` allowlist; other chats ignored silently
+- [ ] **M5T02** `bot/auth.py` — `TELEGRAM_CHAT_ID` allowlist; other chats ignored silently.
+      **Security-critical:** this allowlist must gate EVERY command before dispatch — without it
+      anyone who finds the bot can run `/scan`, `/add`, `/remove`.
 - [ ] **M5T03** `bot/dispatch.py` — update → command → response
 - [ ] **M5T04** Symbol validation regex `^[A-Z][A-Z0-9.\-]{0,9}$` applied at the bot boundary
       (architecture §8.6) — note: already applied in `composition/cli.py::_normalise`, needs
@@ -116,7 +118,8 @@ Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 ## M7 — Deploy
 
 - [ ] **M7T01** Secrets externalised (`.env` for RPi/local; SSM Parameter Store deferred with
-      Lambda)
+      Lambda). The `.env` holds the bot token + chat_id — deploy must `chmod 600 .env` so it is
+      not group/world-readable.
 - [ ] **M7T02** Nightly DB backup (plain file copy per PRD FR-6)
 - [ ] **M7T03** Telegram long-poll loop wired into `rpi_main.py` (replaces webhook for the Pi
       target)
