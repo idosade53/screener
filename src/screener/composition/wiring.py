@@ -12,8 +12,10 @@ from screener.adapters.market_data.yfinance_provider import YFinanceProvider
 from screener.adapters.notify.console_notifier import ConsoleNotifier
 from screener.adapters.notify.telegram_notifier import TelegramNotifier
 from screener.adapters.repository.sqlite_repository import SqliteScreenerRepository
+from screener.bot.context import BotContext
 from screener.config import Settings, load_settings
 from screener.domain.errors import ConfigError
+from screener.domain.models import ScanType
 from screener.ports.calendar import TradingCalendar
 from screener.ports.clock import Clock
 from screener.ports.market_data import MarketDataProvider
@@ -73,4 +75,14 @@ def build_application(settings: Settings | None = None) -> Application:
         clock=SystemClock(),
         notifier=notifier,
         criteria=criteria,
+    )
+
+
+def build_bot_context(app: Application) -> BotContext:
+    """Narrow the composition-root ``Application`` down to what a bot handler may touch
+    (M5). This is the seam the M7 long-poll loop injects into ``bot.dispatch.dispatch``."""
+    return BotContext(
+        repo=app.repo,
+        settings=app.settings,
+        run_scan=lambda: app.pipeline().run(ScanType.MANUAL),
     )

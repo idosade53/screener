@@ -5,15 +5,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
 from collections.abc import Sequence
 from datetime import timedelta
 
 from screener.composition.wiring import Application, build_application
 from screener.domain.models import ScanType
-
-_SYMBOL_RE = r"^[A-Z][A-Z0-9.\-]{0,9}$"
+from screener.screener.symbols import normalise
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -40,6 +38,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_backfill = sub.add_parser("backfill", help="fetch and cache history for symbols")
     p_backfill.add_argument("symbols", nargs="+")
 
+    sub.add_parser("bot", help="run the Telegram long-poll command loop (Ctrl-C to stop)")
+
     p_uni = sub.add_parser("universe", help="manage the watched universe")
     uni_sub = p_uni.add_subparsers(dest="universe_command", required=True)
     uni_sub.add_parser("list")
@@ -61,6 +61,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "bot":
+        from screener.composition.bot_runner import run_bot
+
+        run_bot(app)
+        return 0
+
     if args.command == "backfill":
         return _backfill(app, _normalise(args.symbols))
 
@@ -71,15 +77,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _normalise(symbols: Sequence[str]) -> list[str]:
-    out: list[str] = []
-    for s in symbols:
-        u = s.strip().upper()
-        if not re.match(_SYMBOL_RE, u):
-            print(f"skip invalid symbol: {s!r}", file=sys.stderr)
-            continue
-        if u not in out:
-            out.append(u)
-    return out
+    result = normalise(symbols)
+    for bad in result.invalid:
+        print(f"skip invalid symbol: {bad!r}", file=sys.stderr)
+    return result.valid
 
 
 def _backfill(app: Application, symbols: list[str]) -> int:
