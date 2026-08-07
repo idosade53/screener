@@ -1,0 +1,58 @@
+[importlinter]
+root_package = screener
+include_external_packages = True
+
+# Rule 1: indicators/ is pure — only domain, pandas, numpy.
+[importlinter:contract:indicators-are-pure]
+name = indicators may only import domain, pandas, numpy
+type = forbidden
+source_modules =
+    screener.indicators
+forbidden_modules =
+    screener.ports
+    screener.screener
+    screener.adapters
+    screener.bot
+    screener.composition
+    screener.config
+    yfinance
+    boto3
+    requests
+
+# Rule 2: core (domain, indicators, screener, ports) never imports adapters or any SDK.
+[importlinter:contract:core-has-no-sdk-or-adapters]
+name = core must not import adapters or third-party SDKs
+type = forbidden
+source_modules =
+    screener.domain
+    screener.indicators
+    screener.screener
+    screener.ports
+forbidden_modules =
+    screener.adapters
+    boto3
+    yfinance
+    requests
+    telegram
+
+# Rule 3a: only composition may instantiate adapters — bot uses ports/screener only.
+[importlinter:contract:bot-uses-ports-only]
+name = bot must not import adapters
+type = forbidden
+source_modules =
+    screener.bot
+forbidden_modules =
+    screener.adapters
+
+# Rule 3b: layered dependency direction points inward.
+[importlinter:contract:layers]
+name = imports point inward only
+type = layers
+layers =
+    screener.composition
+    screener.bot
+    screener.adapters
+    screener.screener
+    screener.ports
+    screener.indicators
+    screener.domain

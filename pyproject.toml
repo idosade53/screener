@@ -1,0 +1,58 @@
+[tool.poetry]
+name = "screener"
+version = "0.1.0"
+description = "MA150 / ATR proximity stock screener with Telegram alerts"
+authors = ["Ido <idosade53@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "screener", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+pandas = "^2.2"
+numpy = "^2.1"
+yfinance = "^0.2.50"
+exchange-calendars = "^4.5"
+pydantic = "^2.9"
+pydantic-settings = "^2.6"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-cov = "^6.0"
+import-linter = "^2.1"
+ruff = "^0.8"
+mypy = "^1.13"
+
+[tool.poetry.scripts]
+screener = "screener.composition.cli:main"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["yfinance.*", "exchange_calendars.*", "pandas.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The host shell leaks ROS2 site-packages onto PYTHONPATH, whose pytest plugins fail to import
+# (e.g. launch_testing needs PyYAML). Disable them explicitly; keep pytest-cov.
+addopts = """-q \
+  -p no:ament_copyright -p no:ament_flake8 -p no:ament_lint -p no:ament_pep257 \
+  -p no:ament_xmllint -p no:launch_ros -p no:launch_testing"""
