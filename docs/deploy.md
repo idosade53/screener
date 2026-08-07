@@ -19,8 +19,12 @@ is the AWS Lambda Python 3.13 base image with everything installed into `${LAMBD
 Build for `linux/amd64` (the Lambda architecture; arm64 later from the same file):
 
 ```bash
-docker buildx build --platform linux/amd64 -t screener:latest --load .
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t screener:latest --load .
 ```
+
+> **`--provenance=false --sbom=false` is required.** Without them buildx attaches attestation
+> manifests, producing an OCI image index that Lambda rejects with *"The image manifest, config or
+> layer media type … is not supported."* The same flags apply to the `--push` form below.
 
 The default `CMD` is the scan handler; each function overrides it via `image_config.command` in
 Terraform, so **one image serves all three**.
