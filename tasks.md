@@ -6,8 +6,9 @@ order, M0–M7 — more granular than the PRD, matches the actual package layout
 Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 
 **Status: M0–M5 done and green; M7 (Lambda + DynamoDB) in progress — Stages 1–2 landed
-(DynamoDB adapter + 3 Lambda handlers + SSM secrets), 135 tests green. Remaining: Stage 3
-container image, Stage 4 Terraform + deploy.** M6 in-process scheduling (M6T02–T04) is the RPi
+(DynamoDB adapter + 3 Lambda handlers + SSM secrets), 135 tests green; Stage 3 (Dockerfile +
+.dockerignore + deploy docs) built `linux/amd64` and RIE-smoke-tested (scan + webhook handlers).
+Remaining: Stage 4 Terraform + deploy.** M6 in-process scheduling (M6T02–T04) is the RPi
 target and is out of scope for the Lambda deployment (EventBridge replaces it). (M5 = command/
 dispatch logic; the live Telegram long-poll transport is `composition/bot_runner.py`.)
 
@@ -153,7 +154,14 @@ dispatch logic; the live Telegram long-poll transport is `composition/bot_runner
         `composition/secrets.py` (SSM Parameter Store overlay when `SCREENER_SSM_PREFIX` is set,
         else plain `.env`). New `config.py` fields: `telegram_webhook_secret`, `export_bucket`,
         `export_key`.
-  - [ ] **Stage 3** container image (multi-stage Dockerfile, one image / three handlers, <300 MB).
+  - [x] **Stage 3** container image: multi-stage `Dockerfile` (python:3.13-slim builder exports
+        locked deps + builds the wheel → AWS Lambda Python 3.13 base, deps into `${LAMBDA_TASK_ROOT}`,
+        dev group excluded, `--no-compile`); one image / three handlers selected by
+        `image_config.command`; `.dockerignore` to slim the context; build/RIE-smoke-test steps in
+        `docs/deploy.md`. **Built `linux/amd64` and RIE-smoke-tested** — scan handler returns a valid
+        response (+ proper error payload for a bad type), webhook processes an authorized `/list` and
+        silently 200s an unauthorized chat. Image ≈1.06 GB (Lambda base + pandas/numpy dominate;
+        within the 10 GB limit — trims noted in `docs/deploy.md`).
   - [ ] **Stage 4** Terraform infra: DynamoDB 5/5 + billing alarm, ECR 2-image lifecycle, 3 Lambdas
         + least-privilege IAM, EventBridge Scheduler (ET cron), S3 export bucket. Scheduling is
         EventBridge here — the RPi APScheduler wiring (M6T02–T04) is **not** needed for this target.
