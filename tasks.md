@@ -190,3 +190,73 @@ dispatch logic; the live Telegram long-poll transport is `composition/bot_runner
       distinct from the automated fixture tests already in `test_atr.py`/`test_sma.py`
 - [ ] **MXT02** Second criterion extensibility point (§10/§11.1) — no second criterion exists yet;
       the `Criterion` protocol and registry are in place but only exercised with one implementation
+
+---
+
+# Tasks — Fundamentals & News Dossier (Phase 4)
+
+Derived from `docs/PRD-fundamentals-dossier.md`. On-demand per-symbol dossier: FMP fundamentals +
+Finnhub news behind new ports (yfinance fallback), a pure rules-based scorecard, cached in the
+existing repository, delivered via `/dossier` (Telegram) and `screener dossier` (CLI), with an
+optional off-by-default Claude Haiku summary. Milestone IDs are `F`-prefixed to avoid colliding
+with the Phase-1 `M0–M7` above; tasks are `F<n>T<nn>`; branch names `p4-<slug>`.
+
+**Status: not started (PRD approved 2026-08-08).**
+
+## F1 — Ports + domain models
+
+- [ ] **F1T01** `ports/fundamentals.py`, `ports/news.py`, `ports/summary.py` — Protocol interfaces
+      (FR-1), mirroring `ports/market_data.py` style
+- [ ] **F1T02** `domain/models.py` additions — `CompanyProfile`, `FundamentalsSnapshot`, `NewsItem`,
+      `ScoreLine`, `Scorecard`, `Dossier` (frozen dataclasses, `Decimal` money/ratios)
+- [ ] **F1T03** `import-linter` contract extended to the new `fundamentals`/`news`/`summary`
+      packages; `mypy --strict` clean
+
+## F2 — Scorecard engine (pure)
+
+- [ ] **F2T01** `screener/fundamentals/thresholds.py` — `ScorecardThresholds` config object (§4.2)
+- [ ] **F2T02** `screener/fundamentals/scorecard.py::score(snapshot, thresholds) -> Scorecard` —
+      no provider/telegram/db knowledge (layered like `screener/criterion.py`)
+- [ ] **F2T03** Unit tests vs. 5 hand-checked fixtures: mega-cap, value, growth-unprofitable,
+      high-debt, insufficient-data (SC-3)
+
+## F3 — Provider adapters
+
+- [ ] **F3T01** `adapters/fundamentals/fmp_provider.py` — FMP profile/ratios-ttm/key-metrics/
+      income-statement/price-target, `Decimal` at boundary, injectable `http_get_fn`, `_with_retries`
+- [ ] **F3T02** `adapters/fundamentals/yfinance_provider.py` — fallback via existing yfinance dep
+- [ ] **F3T03** `adapters/news/finnhub_provider.py` — `company-news`, dedup/sort/cap, yfinance
+      `.news` fallback
+- [ ] **F3T04** Contract tests replay recorded JSON frames (no network); graceful degradation on
+      primary-provider failure verified (SC-4)
+
+## F4 — Caching & persistence
+
+- [ ] **F4T01** Repository-port methods: `get/put_fundamentals_snapshot`, `get/put_news_cache` (FR-6)
+- [ ] **F4T02** SQLite tables `fundamentals_snapshot`, `news_cache`
+      (`adapters/repository/sqlite_repository.py`); document in `docs/db-schema.md`
+- [ ] **F4T03** DynamoDB items `PK=FUND#<symbol>` / `PK=NEWS#<symbol>`
+      (`adapters/repository/dynamodb_repository.py`)
+- [ ] **F4T04** New cases added to the shared `tests/contract/repository_contract.py` (both backends
+      pass); freshness rule (§4.3: `next_earnings_date` + TTL) covered
+
+## F5 — Dossier assembly + delivery
+
+- [ ] **F5T01** `screener/fundamentals/dossier.py::build_dossier` — cache → providers → scorecard →
+      optional summary → `Dossier`
+- [ ] **F5T02** `screener/fundamentals/formatters.py::format_dossier` — Telegram/CLI text
+- [ ] **F5T03** `/dossier` (alias `/dd`) command in `bot/commands.py` + `bot/dispatch.py`; authorized
+      chat only (reuses `bot/auth.py`)
+- [ ] **F5T04** `screener dossier <SYMBOL> [--no-cache] [--ai]` in `composition/cli.py`
+- [ ] **F5T05** Wiring in `composition/wiring.py`; end-to-end against fakes; cache-hit path makes
+      zero external calls (SC-2)
+
+## F6 — Optional AI summary
+
+- [ ] **F6T01** `config.py` fields: `fmp_api_key`, `finnhub_api_key`, `anthropic_api_key`,
+      `fundamentals_provider`, `news_provider`, `dossier_ai_summary` (default `false`),
+      `news_lookback_days`, `news_max_items`, `news_cache_hours`, `fundamentals_cache_days`;
+      secrets via `.env` + SSM (`composition/secrets.py`)
+- [ ] **F6T02** `adapters/summary/anthropic_provider.py` — Claude Haiku 4.5 via Messages API,
+      structured-data-only prompt, behind `SummaryProvider`; mocked in tests (no network)
+- [ ] **F6T03** Toggle verified: `--ai`/config on adds exactly one LLM call, off adds none (SC-5)

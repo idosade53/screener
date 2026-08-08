@@ -5,6 +5,9 @@ ATR14 from completed daily bars, and reports which symbols trade within 1.5×ATR
 moving average. See [docs/PRD-stock-screener.md](docs/PRD-stock-screener.md) and
 [docs/architecture.md](docs/architecture.md).
 
+A planned **Phase 4** adds an on-demand fundamentals + news **dossier** (`/dossier TSLA`) to vet a
+company before buying — see [docs/PRD-fundamentals-dossier.md](docs/PRD-fundamentals-dossier.md).
+
 ## Status
 
 Phase 1, core (M0–M3): domain + ports, indicator math, SQLite data layer, and an end-to-end scan
