@@ -53,6 +53,12 @@ resource "aws_lambda_function" "webhook" {
   timeout       = 30
   memory_size   = 512
 
+  # A single operator never needs more than a couple of concurrent replies; the public API Gateway
+  # endpoint means an unauthenticated POST flood would otherwise fan out unbounded Lambda + SSM
+  # invocations (the secret-token check runs inside the handler, after cold start). Cap the blast
+  # radius, matching the reserved concurrency on scan/export.
+  reserved_concurrent_executions = 5
+
   image_config {
     command = ["screener.composition.lambda_webhook.handler"]
   }
