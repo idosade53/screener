@@ -66,21 +66,10 @@ resource "aws_lambda_function" "webhook" {
   depends_on = [aws_cloudwatch_log_group.webhook]
 }
 
-# Public Function URL — Telegram cannot sign requests, so auth is the secret-token header the
-# webhook handler checks (plus the chat allowlist). AuthType NONE therefore needs an explicit
-# public invoke permission.
-resource "aws_lambda_function_url" "webhook" {
-  function_name      = aws_lambda_function.webhook.function_name
-  authorization_type = "NONE"
-}
-
-resource "aws_lambda_permission" "webhook_public" {
-  statement_id           = "AllowPublicFunctionUrl"
-  action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.webhook.function_name
-  principal              = "*"
-  function_url_auth_type = "NONE"
-}
+# The webhook is fronted by an API Gateway HTTP API (see apigw.tf), not a Lambda Function URL:
+# this account blocks public (AuthType NONE) function URLs at the platform level, and Telegram
+# cannot sign requests. API Gateway public endpoints are not subject to that block. Auth is still
+# the secret-token header the handler checks, plus the M5 chat allowlist.
 
 # ---- export -------------------------------------------------------------------
 resource "aws_lambda_function" "export" {
