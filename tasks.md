@@ -201,16 +201,22 @@ existing repository, delivered via `/dossier` (Telegram) and `screener dossier` 
 optional off-by-default Claude Haiku summary. Milestone IDs are `F`-prefixed to avoid colliding
 with the Phase-1 `M0–M7` above; tasks are `F<n>T<nn>`; branch names `p4-<slug>`.
 
-**Status: not started (PRD approved 2026-08-08).**
+**Status: F1 done and green (135 tests); F2–F6 not started (PRD approved 2026-08-08).**
 
 ## F1 — Ports + domain models
 
-- [ ] **F1T01** `ports/fundamentals.py`, `ports/news.py`, `ports/summary.py` — Protocol interfaces
-      (FR-1), mirroring `ports/market_data.py` style
-- [ ] **F1T02** `domain/models.py` additions — `CompanyProfile`, `FundamentalsSnapshot`, `NewsItem`,
-      `ScoreLine`, `Scorecard`, `Dossier` (frozen dataclasses, `Decimal` money/ratios)
-- [ ] **F1T03** `import-linter` contract extended to the new `fundamentals`/`news`/`summary`
-      packages; `mypy --strict` clean
+- [x] **F1T01** `ports/fundamentals.py`, `ports/news.py`, `ports/summary.py` — Protocol interfaces
+      (FR-1), mirroring `ports/market_data.py` style. `SummaryProvider.summarize(dossier)` takes a
+      `Dossier` with `ai_summary=None` (folded back via `dataclasses.replace` in F5) to avoid a
+      separate context type.
+- [x] **F1T02** `domain/models.py` additions — `CompanyProfile`, `FundamentalsSnapshot`, `NewsItem`,
+      `ScoreLine`, `Scorecard`, `Dossier` (frozen dataclasses, `Decimal` money/ratios) + `Flag`/
+      `ScoreCategory` StrEnums. `Scorecard.tally` is a computed property (`"4🟢 1🟡 1🔴"`, NA omitted)
+      so it can't drift from `lines`.
+- [x] **F1T03** No `.importlinter` edit needed: the new port *modules* live under `screener.ports`,
+      already governed by the existing `core-has-no-sdk-or-adapters` + `layers` contracts. The real
+      contract extension (new `screener.fundamentals` layer, `anthropic` allowance for
+      `adapters.summary`) lands with those packages in F2/F3. `mypy --strict`/`lint-imports` clean.
 
 ## F2 — Scorecard engine (pure)
 

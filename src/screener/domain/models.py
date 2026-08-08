@@ -145,3 +145,145 @@ class Diff:
     @property
     def changed(self) -> bool:
         return self.current != self.previous
+
+
+# --- Phase 4: Fundamentals & News Dossier (PRD-fundamentals-dossier) ---------------------
+#
+# Cache-first, on-demand per-symbol dossier. Same numeric policy as above: all money/ratio
+# values are ``Decimal`` (quantised to 4 dp by the provider adapter at its boundary, F3), and
+# any metric a provider may not supply is ``... | None`` — it renders ``n/a`` and down-weights
+# (never fails) the corresponding scorecard line (PRD §4.1/§4.2).
+
+
+class Flag(StrEnum):
+    """Per-line scorecard verdict (PRD §4.2)."""
+
+    GREEN = "GREEN"
+    YELLOW = "YELLOW"
+    RED = "RED"
+    NA = "NA"  # metric missing -> down-weighted, not a failure
+
+
+class ScoreCategory(StrEnum):
+    """The six scorecard rows (PRD §4.2)."""
+
+    VALUATION = "VALUATION"
+    GROWTH = "GROWTH"
+    PROFITABILITY = "PROFITABILITY"
+    BALANCE_SHEET = "BALANCE_SHEET"
+    ANALYST = "ANALYST"
+    EARNINGS_TIMING = "EARNINGS_TIMING"
+
+
+@dataclass(frozen=True)
+class CompanyProfile:
+    """Header facts (PRD §4.1 row 1). Everything but ``symbol``/``name`` may be absent."""
+
+    symbol: str
+    name: str
+    sector: str | None
+    industry: str | None
+    market_cap: Decimal | None
+    currency: str | None
+    exchange: str | None
+
+
+@dataclass(frozen=True)
+class FundamentalsSnapshot:
+    """The derived numbers we score on — not raw statements (PRD §10, §4.2). Flat and cache-
+    friendly: this is what a provider returns and what the repository persists (F4)."""
+
+    symbol: str
+    fetched_at: datetime  # UTC, tz-aware
+    source: str  # which provider produced it (e.g. "fmp", "yfinance")
+    next_earnings_date: date | None
+
+    # Valuation
+    pe_ttm: Decimal | None
+    pe_fwd: Decimal | None
+    price_to_sales: Decimal | None
+    peg: Decimal | None
+    ev_ebitda: Decimal | None
+    price_to_book: Decimal | None
+
+    # Growth
+    revenue_yoy: Decimal | None
+    eps_yoy: Decimal | None
+    revenue_cagr_3y: Decimal | None
+
+    # Profitability
+    gross_margin: Decimal | None
+    operating_margin: Decimal | None
+    net_margin: Decimal | None
+    roe: Decimal | None
+    fcf_positive: bool | None
+
+    # Balance sheet
+    debt_to_equity: Decimal | None
+    current_ratio: Decimal | None
+    net_debt_to_ebitda: Decimal | None
+    interest_coverage: Decimal | None
+
+    # Analyst view
+    analyst_rating: str | None
+    num_analysts: int | None
+    mean_target: Decimal | None
+
+    # Earnings timing
+    last_earnings_surprise_pct: Decimal | None
+
+
+@dataclass(frozen=True)
+class NewsItem:
+    """One company-specific headline (PRD §4.1 row 9, FR-3)."""
+
+    published_at: datetime  # UTC, tz-aware
+    source: str
+    headline: str
+    url: str
+    summary: str | None
+
+
+@dataclass(frozen=True)
+class ScoreLine:
+    """One scorecard row: a flag plus the driving value and a one-line note (PRD §4.2)."""
+
+    category: ScoreCategory
+    flag: Flag
+    value: str | None  # rendered driver, e.g. "P/E 18.2, PEG 1.1" — str: some rows cite two
+    note: str
+
+
+@dataclass(frozen=True)
+class Scorecard:
+    """The actionable core: the six flag lines plus a headline tally (PRD §4.2). Flags and
+    facts only — never a buy/sell/hold recommendation (PRD §2 D5)."""
+
+    lines: tuple[ScoreLine, ...]
+
+    @property
+    def tally(self) -> str:
+        """Headline count, e.g. ``"4🟢 1🟡 1🔴"`` — derived from ``lines`` so the two can
+        never disagree. ``NA`` lines are omitted from the tally."""
+        emoji = {Flag.GREEN: "🟢", Flag.YELLOW: "🟡", Flag.RED: "🔴"}
+        parts = [
+            f"{sum(1 for line in self.lines if line.flag is flag)}{glyph}"
+            for flag, glyph in emoji.items()
+            if any(line.flag is flag for line in self.lines)
+        ]
+        return " ".join(parts)
+
+
+@dataclass(frozen=True)
+class Dossier:
+    """The assembled report (PRD §4.1). ``ai_summary`` is filled by the optional stage (F6);
+    ``notes`` carries footer DATA_ERROR/STALE annotations (§4.1 row 11)."""
+
+    symbol: str
+    profile: CompanyProfile
+    snapshot: FundamentalsSnapshot
+    scorecard: Scorecard
+    news: tuple[NewsItem, ...]
+    generated_at: datetime  # UTC, tz-aware
+    ai_summary: str | None = None
+    notes: tuple[str, ...] = ()
