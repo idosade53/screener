@@ -53,6 +53,21 @@ class Settings(BaseSettings):
     export_bucket: str | None = None
     export_key: str = "screener-latest.db"
 
+    # --- Phase 4: fundamentals & news dossier (PRD-fundamentals-dossier §6) -------------
+    # Provider API keys (via .env locally / SSM on Lambda; never logged). Absent keys force
+    # the zero-key yfinance fallback.
+    fmp_api_key: str | None = None
+    finnhub_api_key: str | None = None
+    fundamentals_provider: Literal["fmp", "yfinance"] = "fmp"
+    news_provider: Literal["finnhub", "yfinance"] = "finnhub"
+    # Caching windows (§4.3): fundamentals change only on an earnings release; news is short-lived.
+    fundamentals_cache_days: int = 1
+    news_cache_hours: int = 6
+    news_lookback_days: int = 7
+    news_max_items: int = 10
+    # AI summary (F6) — declared here so config stays one object; the adapter/toggle land in F6.
+    dossier_ai_summary: bool = False
+
     @field_validator("scan_times_et")
     @classmethod
     def _validate_times(cls, v: str) -> str:
