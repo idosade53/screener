@@ -27,6 +27,7 @@ source_modules =
     screener.domain
     screener.indicators
     screener.screener
+    screener.fundamentals
     screener.ports
 forbidden_modules =
     screener.adapters
@@ -53,6 +54,7 @@ layers =
     screener.bot
     screener.adapters
     screener.screener
+    screener.fundamentals
     screener.ports
     screener.indicators
     screener.domain
