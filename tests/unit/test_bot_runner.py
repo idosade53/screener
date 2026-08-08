@@ -43,7 +43,12 @@ def settings(tmp_path: Path) -> Settings:
 @pytest.fixture
 def ctx(settings: Settings) -> BotContext:
     repo = SqliteScreenerRepository(settings.db_path)
-    return BotContext(repo=repo, settings=settings, run_scan=lambda: None)  # type: ignore[arg-type,return-value]
+    return BotContext(
+        repo=repo,
+        settings=settings,
+        run_scan=lambda: None,  # type: ignore[arg-type,return-value]
+        build_dossier=lambda _s: None,  # type: ignore[arg-type,return-value]
+    )
 
 
 def test_authorized_command_gets_a_reply(ctx: BotContext) -> None:

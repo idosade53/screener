@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from screener.config import Settings
-from screener.domain.models import ScanSummary
+from screener.domain.models import Dossier, ScanSummary
 from screener.ports.repository import ScreenerRepository
 
 
@@ -19,3 +19,6 @@ class BotContext:
     repo: ScreenerRepository
     settings: Settings
     run_scan: Callable[[], ScanSummary]  # triggers a MANUAL scan; the pipeline sends its own digest
+    # Builds an on-demand fundamentals dossier (F5). Injected by the composition root so the bot
+    # layer stays clear of adapters; may raise UnknownSymbolError for a friendly rejection.
+    build_dossier: Callable[[str], Dossier]

@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from screener.bot.context import BotContext
+from screener.domain.errors import UnknownSymbolError
+from screener.fundamentals.formatters import format_dossier
 from screener.screener.symbols import normalise
 
 Handler = Callable[[list[str], BotContext], str]
@@ -22,6 +24,7 @@ HELP_TEXT = (
     "/remove SYM [SYM …] — remove symbols\n"
     "/status — last scan summary\n"
     "/scan — run a manual scan now\n"
+    "/dossier SYM (alias /dd) — fundamentals + news dossier\n"
     "/help — this message"
 )
 
@@ -107,6 +110,20 @@ def cmd_scan(args: list[str], ctx: BotContext) -> str:
     )
 
 
+def cmd_dossier(args: list[str], ctx: BotContext) -> str:
+    if not args:
+        return "Usage: /dossier SYM"
+    result = normalise(args[:1])
+    if not result.valid:
+        return f"Invalid symbol: {', '.join(result.invalid) or args[0]}"
+    symbol = result.valid[0]
+    try:
+        dossier = ctx.build_dossier(symbol)
+    except UnknownSymbolError:
+        return f"Unknown symbol: {symbol}. Check the ticker and try again."
+    return format_dossier(dossier)
+
+
 COMMANDS: dict[str, Handler] = {
     "help": cmd_help,
     "list": cmd_list,
@@ -114,4 +131,6 @@ COMMANDS: dict[str, Handler] = {
     "remove": cmd_remove,
     "status": cmd_status,
     "scan": cmd_scan,
+    "dossier": cmd_dossier,
+    "dd": cmd_dossier,  # alias (PRD §5)
 }

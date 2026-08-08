@@ -14,9 +14,69 @@ from screener.bot.context import BotContext
 from screener.bot.dispatch import dispatch
 from screener.bot.models import BotUpdate
 from screener.config import Settings, load_settings
-from screener.domain.models import ScanStatus, ScanSummary, ScanType
+from screener.domain.errors import UnknownSymbolError
+from screener.domain.models import (
+    CompanyProfile,
+    Dossier,
+    FundamentalsSnapshot,
+    ScanStatus,
+    ScanSummary,
+    ScanType,
+    Scorecard,
+)
 
 CHAT = "123456"
+
+
+def _fake_dossier(symbol: str) -> Dossier:
+    if symbol == "NOPE":
+        raise UnknownSymbolError(symbol)
+    now = datetime(2026, 8, 7, 20, 15, tzinfo=UTC)
+    profile = CompanyProfile(
+        symbol=symbol,
+        name=f"{symbol} Inc.",
+        sector="Technology",
+        industry="Software",
+        market_cap=None,
+        currency="USD",
+        exchange="NASDAQ",
+    )
+    snapshot = FundamentalsSnapshot(
+        symbol=symbol,
+        fetched_at=now,
+        source="fake",
+        next_earnings_date=None,
+        pe_ttm=None,
+        pe_fwd=None,
+        price_to_sales=None,
+        peg=None,
+        ev_ebitda=None,
+        price_to_book=None,
+        revenue_yoy=None,
+        eps_yoy=None,
+        revenue_cagr_3y=None,
+        gross_margin=None,
+        operating_margin=None,
+        net_margin=None,
+        roe=None,
+        fcf_positive=None,
+        debt_to_equity=None,
+        current_ratio=None,
+        net_debt_to_ebitda=None,
+        interest_coverage=None,
+        analyst_rating=None,
+        num_analysts=None,
+        mean_target=None,
+        last_earnings_surprise_pct=None,
+    )
+    return Dossier(
+        symbol=symbol,
+        profile=profile,
+        snapshot=snapshot,
+        scorecard=Scorecard(lines=()),
+        news=(),
+        generated_at=now,
+    )
 
 
 def _summary() -> ScanSummary:
@@ -68,7 +128,9 @@ def scanner() -> _Scanner:
 def ctx(
     repo: SqliteScreenerRepository, settings: Settings, scanner: _Scanner
 ) -> BotContext:
-    return BotContext(repo=repo, settings=settings, run_scan=scanner)
+    return BotContext(
+        repo=repo, settings=settings, run_scan=scanner, build_dossier=_fake_dossier
+    )
 
 
 def _update(text: str, chat: str = CHAT) -> BotUpdate:
@@ -189,3 +251,29 @@ def test_scan_triggers_a_manual_run(ctx: BotContext, scanner: _Scanner) -> None:
     reply = dispatch(_update("/scan"), ctx)
     assert scanner.calls == 1
     assert reply is not None and "Scan complete" in reply and "1 in range" in reply
+
+
+# ---- dossier --------------------------------------------------------------
+
+def test_dossier_returns_report(ctx: BotContext) -> None:
+    reply = dispatch(_update("/dossier aapl"), ctx)
+    assert reply is not None and "AAPL — AAPL Inc." in reply and "Scorecard" in reply
+
+
+def test_dossier_alias_dd(ctx: BotContext) -> None:
+    reply = dispatch(_update("/dd aapl"), ctx)
+    assert reply is not None and "AAPL Inc." in reply
+
+
+def test_dossier_unknown_symbol_is_friendly(ctx: BotContext) -> None:
+    reply = dispatch(_update("/dossier nope"), ctx)
+    assert reply is not None and "Unknown symbol" in reply
+
+
+def test_dossier_without_args_shows_usage(ctx: BotContext) -> None:
+    reply = dispatch(_update("/dossier"), ctx)
+    assert reply is not None and "Usage" in reply
+
+
+def test_dossier_from_unauthorized_chat_is_ignored(ctx: BotContext) -> None:
+    assert dispatch(_update("/dossier aapl", chat="999"), ctx) is None

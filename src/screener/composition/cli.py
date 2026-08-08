@@ -10,7 +10,9 @@ from collections.abc import Sequence
 from datetime import timedelta
 
 from screener.composition.wiring import Application, build_application
+from screener.domain.errors import UnknownSymbolError
 from screener.domain.models import ScanType
+from screener.fundamentals.formatters import format_dossier
 from screener.screener.symbols import normalise
 
 
@@ -40,6 +42,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     sub.add_parser("bot", help="run the Telegram long-poll command loop (Ctrl-C to stop)")
 
+    p_dossier = sub.add_parser("dossier", help="fundamentals + news dossier for one symbol")
+    p_dossier.add_argument("symbol")
+    p_dossier.add_argument("--no-cache", action="store_true", help="force a refetch")
+    p_dossier.add_argument("--ai", action="store_true", help="add the AI summary for this run")
+
     p_uni = sub.add_parser("universe", help="manage the watched universe")
     uni_sub = p_uni.add_subparsers(dest="universe_command", required=True)
     uni_sub.add_parser("list")
@@ -67,6 +74,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_bot(app)
         return 0
 
+    if args.command == "dossier":
+        return _dossier(app, args)
+
     if args.command == "backfill":
         return _backfill(app, _normalise(args.symbols))
 
@@ -81,6 +91,20 @@ def _normalise(symbols: Sequence[str]) -> list[str]:
     for bad in result.invalid:
         print(f"skip invalid symbol: {bad!r}", file=sys.stderr)
     return result.valid
+
+
+def _dossier(app: Application, args: argparse.Namespace) -> int:
+    symbols = _normalise([args.symbol])
+    if not symbols:
+        print(f"invalid symbol: {args.symbol!r}", file=sys.stderr)
+        return 1
+    try:
+        dossier = app.build_dossier(symbols[0], force_refresh=args.no_cache, with_ai=args.ai)
+    except UnknownSymbolError:
+        print(f"unknown symbol: {symbols[0]}", file=sys.stderr)
+        return 1
+    print(format_dossier(dossier))
+    return 0
 
 
 def _backfill(app: Application, symbols: list[str]) -> int:

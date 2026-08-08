@@ -31,6 +31,8 @@ def _default_get(url: str, params: dict[str, str], timeout: float) -> Any:
 
 
 class FinnhubNewsProvider:
+    source = "finnhub"  # labels the cache entry (PRD §10)
+
     def __init__(
         self,
         api_key: str,
