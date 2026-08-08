@@ -10,8 +10,13 @@ from decimal import Decimal
 
 from screener.domain.models import (
     Bar,
+    CachedFundamentals,
+    CompanyProfile,
     DeliveryStatus,
+    FundamentalsSnapshot,
     Indicators,
+    NewsCacheEntry,
+    NewsItem,
     ScanStatus,
     ScanSummary,
     ScanType,
@@ -45,6 +50,67 @@ def _summary(scan_id: str, day: str, in_range: tuple[str, ...], scan_type: ScanT
         in_range=in_range,
         error_symbols=(),
         insufficient_symbols=(),
+    )
+
+
+def _cached(symbol: str, **snap_overrides: object) -> CachedFundamentals:
+    profile = CompanyProfile(
+        symbol=symbol,
+        name="Apple Inc.",
+        sector="Technology",
+        industry="Consumer Electronics",
+        market_cap=Decimal("3200000000000"),
+        currency="USD",
+        exchange="NASDAQ",
+    )
+    defaults: dict[str, object] = {
+        "symbol": symbol,
+        "fetched_at": datetime.fromisoformat("2026-08-06T12:00:00+00:00"),
+        "source": "fmp",
+        "next_earnings_date": date(2026, 9, 1),
+        "pe_ttm": Decimal("30.5"),
+        "pe_fwd": None,
+        "price_to_sales": None,
+        "peg": Decimal("2.1"),
+        "ev_ebitda": None,
+        "price_to_book": None,
+        "revenue_yoy": Decimal("0.0209"),
+        "eps_yoy": None,
+        "revenue_cagr_3y": None,
+        "gross_margin": None,
+        "operating_margin": None,
+        "net_margin": Decimal("0.25"),
+        "roe": None,
+        "fcf_positive": True,
+        "debt_to_equity": Decimal("1.8"),
+        "current_ratio": Decimal("0.95"),
+        "net_debt_to_ebitda": None,
+        "interest_coverage": None,
+        "analyst_rating": "Buy",
+        "num_analysts": 34,
+        "mean_target": Decimal("240"),
+        "last_earnings_surprise_pct": None,
+    }
+    defaults.update(snap_overrides)
+    return CachedFundamentals(profile=profile, snapshot=FundamentalsSnapshot(**defaults))  # type: ignore[arg-type]
+
+
+def _news_entry(symbol: str, headlines: tuple[str, ...]) -> NewsCacheEntry:
+    items = tuple(
+        NewsItem(
+            published_at=datetime.fromisoformat(f"2026-08-0{i + 1}T09:00:00+00:00"),
+            source="Reuters",
+            headline=h,
+            url=f"https://example.com/{symbol}/{i}",
+            summary=None if i % 2 else "s",
+        )
+        for i, h in enumerate(headlines)
+    )
+    return NewsCacheEntry(
+        symbol=symbol,
+        fetched_at=datetime.fromisoformat("2026-08-06T12:00:00+00:00"),
+        source="finnhub",
+        items=items,
     )
 
 
@@ -167,3 +233,58 @@ class RepositoryContract:
         repo.save_scan(summary, [])
         # Should not raise.
         repo.record_alert(summary.scan_id, "hello", DeliveryStatus.SENT)
+
+    # ---- fundamentals cache (Phase 4) ----
+    def test_fundamentals_cache_miss_returns_none(self, repo: ScreenerRepository) -> None:
+        assert repo.get_fundamentals_snapshot("AAPL") is None
+
+    def test_fundamentals_cache_roundtrip_preserves_types(self, repo: ScreenerRepository) -> None:
+        cached = _cached("AAPL")
+        repo.put_fundamentals_snapshot(cached)
+        got = repo.get_fundamentals_snapshot("AAPL")
+        assert got is not None
+        # Profile + snapshot both survive, and Decimal/date/datetime round-trip exactly.
+        assert got.profile.name == "Apple Inc."
+        assert got.profile.market_cap == Decimal("3200000000000")
+        assert got.snapshot.pe_ttm == Decimal("30.5")
+        assert got.snapshot.fcf_positive is True
+        assert got.snapshot.next_earnings_date == date(2026, 9, 1)
+        assert got.snapshot.fetched_at == cached.snapshot.fetched_at
+        assert got.snapshot.price_to_sales is None
+
+    def test_fundamentals_cache_is_latest_only(self, repo: ScreenerRepository) -> None:
+        repo.put_fundamentals_snapshot(_cached("AAPL", pe_ttm=Decimal("10")))
+        repo.put_fundamentals_snapshot(_cached("AAPL", pe_ttm=Decimal("20")))
+        got = repo.get_fundamentals_snapshot("AAPL")
+        assert got is not None and got.snapshot.pe_ttm == Decimal("20")
+
+    def test_fundamentals_cache_null_earnings_date(self, repo: ScreenerRepository) -> None:
+        repo.put_fundamentals_snapshot(_cached("KO", next_earnings_date=None))
+        got = repo.get_fundamentals_snapshot("KO")
+        assert got is not None and got.snapshot.next_earnings_date is None
+
+    # ---- news cache (Phase 4) ----
+    def test_news_cache_miss_returns_none(self, repo: ScreenerRepository) -> None:
+        assert repo.get_news_cache("AAPL") is None
+
+    def test_news_cache_roundtrip(self, repo: ScreenerRepository) -> None:
+        entry = _news_entry("AAPL", ("first", "second"))
+        repo.put_news_cache(entry)
+        got = repo.get_news_cache("AAPL")
+        assert got is not None
+        assert got.symbol == "AAPL"
+        assert got.source == "finnhub"
+        assert got.fetched_at == entry.fetched_at
+        assert [i.headline for i in got.items] == ["first", "second"]
+        assert got.items[0].published_at == entry.items[0].published_at
+
+    def test_news_cache_is_latest_only(self, repo: ScreenerRepository) -> None:
+        repo.put_news_cache(_news_entry("AAPL", ("old",)))
+        repo.put_news_cache(_news_entry("AAPL", ("new1", "new2")))
+        got = repo.get_news_cache("AAPL")
+        assert got is not None and [i.headline for i in got.items] == ["new1", "new2"]
+
+    def test_news_cache_empty_items(self, repo: ScreenerRepository) -> None:
+        repo.put_news_cache(_news_entry("KO", ()))
+        got = repo.get_news_cache("KO")
+        assert got is not None and got.items == ()

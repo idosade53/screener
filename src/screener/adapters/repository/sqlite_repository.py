@@ -14,11 +14,19 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 
+from screener.adapters.repository._fundamentals_codec import (
+    dumps_cached_fundamentals,
+    dumps_news_items,
+    loads_cached_fundamentals,
+    loads_news_items,
+)
 from screener.domain.errors import RepositoryError
 from screener.domain.models import (
     Bar,
+    CachedFundamentals,
     DeliveryStatus,
     Indicators,
+    NewsCacheEntry,
     ScanStatus,
     ScanSummary,
     ScanType,
@@ -99,6 +107,23 @@ CREATE TABLE IF NOT EXISTS scan_claims (
 
 CREATE INDEX IF NOT EXISTS idx_scans_ran_at ON scans (ran_at);
 CREATE INDEX IF NOT EXISTS idx_scans_trading_day ON scans (trading_day);
+
+-- Phase 4 cache (PRD §10, FR-6). Latest-only per symbol; payload_json is the derived scored
+-- metrics (fundamentals) / the news items, tagged so Decimals/dates round-trip exactly.
+CREATE TABLE IF NOT EXISTS fundamentals_snapshot (
+    symbol             TEXT PRIMARY KEY,
+    fetched_at         TEXT NOT NULL,
+    next_earnings_date TEXT,
+    payload_json       TEXT NOT NULL,
+    source             TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS news_cache (
+    symbol       TEXT PRIMARY KEY,
+    fetched_at   TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    source       TEXT NOT NULL
+);
 """
 
 
@@ -355,4 +380,59 @@ class SqliteScreenerRepository:
                 "INSERT INTO alerts (scan_id, sent_at, message, delivery_status)"
                 " VALUES (?, ?, ?, ?)",
                 (scan_id, now, message, status.value),
+            )
+
+    # ------------------------------------------------- fundamentals & news cache
+    def get_fundamentals_snapshot(self, symbol: str) -> CachedFundamentals | None:
+        row = self._conn.execute(
+            "SELECT payload_json FROM fundamentals_snapshot WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        return loads_cached_fundamentals(row["payload_json"]) if row else None
+
+    def put_fundamentals_snapshot(self, cached: CachedFundamentals) -> None:
+        snap = cached.snapshot
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO fundamentals_snapshot"
+                " (symbol, fetched_at, next_earnings_date, payload_json, source)"
+                " VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(symbol) DO UPDATE SET"
+                " fetched_at=excluded.fetched_at, next_earnings_date=excluded.next_earnings_date,"
+                " payload_json=excluded.payload_json, source=excluded.source",
+                (
+                    snap.symbol,
+                    snap.fetched_at.isoformat(),
+                    snap.next_earnings_date.isoformat() if snap.next_earnings_date else None,
+                    dumps_cached_fundamentals(cached),
+                    snap.source,
+                ),
+            )
+
+    def get_news_cache(self, symbol: str) -> NewsCacheEntry | None:
+        row = self._conn.execute(
+            "SELECT fetched_at, payload_json, source FROM news_cache WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        if row is None:
+            return None
+        return NewsCacheEntry(
+            symbol=symbol,
+            fetched_at=datetime.fromisoformat(row["fetched_at"]),
+            source=row["source"],
+            items=loads_news_items(row["payload_json"]),
+        )
+
+    def put_news_cache(self, entry: NewsCacheEntry) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO news_cache (symbol, fetched_at, payload_json, source)"
+                " VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(symbol) DO UPDATE SET"
+                " fetched_at=excluded.fetched_at, payload_json=excluded.payload_json,"
+                " source=excluded.source",
+                (
+                    entry.symbol,
+                    entry.fetched_at.isoformat(),
+                    dumps_news_items(entry.items),
+                    entry.source,
+                ),
             )
