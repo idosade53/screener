@@ -5,8 +5,13 @@ order, M0–M7 — more granular than the PRD, matches the actual package layout
 
 Tasks are numbered `M<milestone>T<task>`, e.g. `M2T05` = milestone 2, task 5.
 
-**Status: M0–M5 done and green (106 tests). M6–M7 not started.** (M5 = command/dispatch
-logic only; the live Telegram long-poll transport that feeds it is M7T03.)
+**Status: M0–M5 done and green; M7 (Lambda + DynamoDB) in progress — Stages 1–2 landed
+(DynamoDB adapter + 3 Lambda handlers + SSM secrets), 135 tests green; Stage 3 (Dockerfile +
+.dockerignore + deploy docs) built `linux/amd64` and RIE-smoke-tested; Stage 4 Terraform (`infra/`)
+authored. Remaining: `terraform validate`/`apply` on a machine with Terraform + AWS creds, push
+image, set secrets, register webhook, observe 5 clean trading days.** M6 in-process scheduling (M6T02–T04) is the RPi
+target and is out of scope for the Lambda deployment (EventBridge replaces it). (M5 = command/
+dispatch logic; the live Telegram long-poll transport is `composition/bot_runner.py`.)
 
 ---
 
@@ -136,20 +141,48 @@ logic only; the live Telegram long-poll transport that feeds it is M7T03.)
       target)
 - [ ] **M7T04** Docker Compose deployment (PRD M7 DoD, target-agnostic per architecture §14 R3)
 - [ ] **M7T05** 5 consecutive clean trading days observed post-deploy
-- [ ] **M7T06** *(Lambda path, if pursued instead of/before RPi):* `composition/lambda_scan.py`,
-      `lambda_webhook.py`, `lambda_export.py`, container image + ECR lifecycle policy,
-      EventBridge Scheduler rules, DynamoDB table + `dynamodb_repository.py`
+- [ ] **M7T06** *(Lambda path — now the chosen Phase-1 target):* delivered in stages.
+  - [x] **Stage 1** `adapters/repository/dynamodb_repository.py` — full `ScreenerRepository` over
+        the §8.3 single table (`screener`); passes the shared `RepositoryContract` under moto
+        (`tests/contract/test_dynamodb_repository.py`, 16 tests, no network). `boto3` runtime dep +
+        `moto` dev dep added; `composition/wiring.py` builds the Dynamo table when
+        `repository_backend == "dynamodb"` (`dynamodb_table`/`aws_region` in `config.py`).
+  - [x] **Stage 2** Lambda composition roots (unit/integration-tested with fakes + moto, no
+        network): `composition/lambda_scan.py` (EventBridge `scan_type` → pipeline),
+        `lambda_webhook.py` (Function-URL Telegram receiver reusing `bot_runner._process`, with a
+        `X-Telegram-Bot-Api-Secret-Token` gate on top of the M5 chat allowlist), `lambda_export.py`
+        (full DynamoDB scan → FR-6 SQLite rebuild → atomic S3 swap, §9.4), and
+        `composition/secrets.py` (SSM Parameter Store overlay when `SCREENER_SSM_PREFIX` is set,
+        else plain `.env`). New `config.py` fields: `telegram_webhook_secret`, `export_bucket`,
+        `export_key`.
+  - [x] **Stage 3** container image: multi-stage `Dockerfile` (python:3.13-slim builder exports
+        locked deps + builds the wheel → AWS Lambda Python 3.13 base, deps into `${LAMBDA_TASK_ROOT}`,
+        dev group excluded, `--no-compile`); one image / three handlers selected by
+        `image_config.command`; `.dockerignore` to slim the context; build/RIE-smoke-test steps in
+        `docs/deploy.md`. **Built `linux/amd64` and RIE-smoke-tested** — scan handler returns a valid
+        response (+ proper error payload for a bad type), webhook processes an authorized `/list` and
+        silently 200s an unauthorized chat. Image ≈1.06 GB (Lambda base + pandas/numpy dominate;
+        within the 10 GB limit — trims noted in `docs/deploy.md`).
+  - [~] **Stage 4** Terraform infra in `infra/` (authored; **not yet `terraform validate`d/applied**
+        — no Terraform binary in the authoring env): `dynamodb.tf` (5/5 provisioned + PITR),
+        `ecr.tf` (2-image lifecycle), `lambda.tf` (3 image functions off one image + webhook Function
+        URL), `scheduler.tf` (EventBridge Scheduler ET cron PRE/OPEN/CLOSE + daily export),
+        `s3.tf` (versioned export bucket), `ssm.tf` (secret placeholders, values set out-of-band),
+        `iam.tf` (per-function least-privilege + scheduler role), `monitoring.tf` ($1 billing alarm),
+        plus `outputs.tf`, `variables.tf`, `README.md` runbook. Scheduling is EventBridge here — the
+        RPi APScheduler wiring (M6T02–T04) is **not** needed for this target.
+  - [ ] **Deploy/verify** (needs AWS creds + Docker host): `terraform fmt/validate/apply`, push image,
+        set SSM secrets, register Telegram webhook, then observe 5 consecutive clean trading days
+        (M7T05).
 
 ---
 
 ## Deferred by design (not a gap)
 
-- **DynamoDB repository adapter** — `composition/wiring.py` raises `ConfigError` for any backend
-  other than `sqlite`. This is an intentional current choice (SQLite-first), not an oversight: the
-  SQLite implementation already satisfies the same `ScreenerRepository` contract tests, and
-  architecture §8.5 "path 2" treats the SQLite file as the eventual RPi5 migration artefact
-  regardless. Add `dynamodb_repository.py` only if the Lambda deployment path (§8) is actually
-  pursued.
+- **DynamoDB repository adapter** — *no longer deferred.* The Lambda deployment path (§8) is now
+  being pursued, so `adapters/repository/dynamodb_repository.py` has landed (M7T06 Stage 1) and
+  `composition/wiring.py` selects it on `repository_backend == "dynamodb"`. SQLite remains the
+  RPi/local default and the §8.5 "path 2" migration artefact; both back the same contract suite.
 
 ## Not yet covered by any milestone above
 

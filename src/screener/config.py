@@ -38,8 +38,20 @@ class Settings(BaseSettings):
     provider: Literal["yfinance"] = "yfinance"
     db_path: str = "screener.db"
 
+    # DynamoDB backend (architecture §9.3 single table). Only read when
+    # repository_backend == "dynamodb"; region falls back to the standard AWS env vars.
+    dynamodb_table: str = "screener"
+    aws_region: str | None = None
+
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
+    # Optional shared secret echoed by Telegram in the X-Telegram-Bot-Api-Secret-Token header
+    # (set via setWebhook). When configured, the webhook Lambda rejects mismatching requests.
+    telegram_webhook_secret: str | None = None
+
+    # Nightly analytical export (architecture §9.4). Only read by the export Lambda.
+    export_bucket: str | None = None
+    export_key: str = "screener-latest.db"
 
     @field_validator("scan_times_et")
     @classmethod

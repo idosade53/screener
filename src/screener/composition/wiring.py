@@ -11,6 +11,7 @@ from screener.adapters.clock.system_clock import SystemClock
 from screener.adapters.market_data.yfinance_provider import YFinanceProvider
 from screener.adapters.notify.console_notifier import ConsoleNotifier
 from screener.adapters.notify.telegram_notifier import TelegramNotifier
+from screener.adapters.repository.dynamodb_repository import DynamoDbScreenerRepository
 from screener.adapters.repository.sqlite_repository import SqliteScreenerRepository
 from screener.bot.context import BotContext
 from screener.config import Settings, load_settings
@@ -50,12 +51,16 @@ class Application:
 def build_application(settings: Settings | None = None) -> Application:
     cfg = settings or load_settings()
 
+    repo: ScreenerRepository
     if cfg.repository_backend == "sqlite":
-        repo: ScreenerRepository = SqliteScreenerRepository(cfg.db_path)
-    else:  # dynamodb adapter is a later milestone
-        raise ConfigError(
-            f"repository_backend={cfg.repository_backend!r} is not implemented yet; use 'sqlite'"
-        )
+        repo = SqliteScreenerRepository(cfg.db_path)
+    elif cfg.repository_backend == "dynamodb":
+        import boto3  # local import: keep boto3 off the SQLite/CLI path
+
+        table = boto3.resource("dynamodb", region_name=cfg.aws_region).Table(cfg.dynamodb_table)
+        repo = DynamoDbScreenerRepository(table)
+    else:  # unreachable given the Literal, but keeps the failure explicit
+        raise ConfigError(f"unknown repository_backend={cfg.repository_backend!r}")
 
     criteria: list[Criterion] = [MA150ProximityCriterion(cfg.band_atr_mult)]
 

@@ -1,0 +1,34 @@
+# Keep the build context tiny — the whole directory is sent to the daemon before COPY runs,
+# and .venv alone is hundreds of MB.
+.git
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Tooling caches / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Not needed at runtime
+tests/
+docs/
+infra/
+dist/
+build/
+*.md
+!README.md
+CLAUDE.md
+.claude/
+
+# Local data / secrets — must never enter an image layer
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+.env
