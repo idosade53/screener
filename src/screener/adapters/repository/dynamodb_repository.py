@@ -12,6 +12,8 @@ Item shapes (``PK`` / ``SK``):
     HIST#<sym>   / <ran_at>                      p, sma, atr, dist, in, status
     CLAIM        / <scan_id>                     claimed
     ALERT#<id>   / <sent_at>                     msg, status
+    FUND#<sym>   / SNAPSHOT                     fetched_at, next_earnings_date, source, payload
+    NEWS#<sym>   / LATEST                       fetched_at, source, payload
 
 ``latest_scan`` reads exactly one item (``Query PK=SCAN, ScanIndexForward=false, Limit 1``):
 ``scan_id`` is ``{trading_day}T{hhmm}Z#{TYPE}`` so SCAN items already sort chronologically. Claims
@@ -32,11 +34,19 @@ from typing import Any
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
 
+from screener.adapters.repository._fundamentals_codec import (
+    dumps_cached_fundamentals,
+    dumps_news_items,
+    loads_cached_fundamentals,
+    loads_news_items,
+)
 from screener.domain.errors import RepositoryError
 from screener.domain.models import (
     Bar,
+    CachedFundamentals,
     DeliveryStatus,
     Indicators,
+    NewsCacheEntry,
     ScanStatus,
     ScanSummary,
     ScanType,
@@ -277,6 +287,51 @@ class DynamoDbScreenerRepository:
                 "SK": now,
                 "msg": message,
                 "status": status.value,
+            }
+        )
+
+    # ------------------------------------------------- fundamentals & news cache
+    # Latest-only per symbol under a fixed SK (SNAPSHOT / LATEST), so a put overwrites (PRD §10).
+    # The derived metrics ride as a JSON ``payload`` string — the same codec the SQLite adapter
+    # uses — so both stores are byte-identical (PRD FR-6).
+    def get_fundamentals_snapshot(self, symbol: str) -> CachedFundamentals | None:
+        item = self._table.get_item(
+            Key={"PK": f"FUND#{symbol}", "SK": "SNAPSHOT"}
+        ).get("Item")
+        return loads_cached_fundamentals(item["payload"]) if item else None
+
+    def put_fundamentals_snapshot(self, cached: CachedFundamentals) -> None:
+        snap = cached.snapshot
+        item: dict[str, Any] = {
+            "PK": f"FUND#{snap.symbol}",
+            "SK": "SNAPSHOT",
+            "fetched_at": snap.fetched_at.isoformat(),
+            "source": snap.source,
+            "payload": dumps_cached_fundamentals(cached),
+        }
+        if snap.next_earnings_date is not None:
+            item["next_earnings_date"] = snap.next_earnings_date.isoformat()
+        self._table.put_item(Item=item)
+
+    def get_news_cache(self, symbol: str) -> NewsCacheEntry | None:
+        item = self._table.get_item(Key={"PK": f"NEWS#{symbol}", "SK": "LATEST"}).get("Item")
+        if item is None:
+            return None
+        return NewsCacheEntry(
+            symbol=symbol,
+            fetched_at=datetime.fromisoformat(item["fetched_at"]),
+            source=item["source"],
+            items=loads_news_items(item["payload"]),
+        )
+
+    def put_news_cache(self, entry: NewsCacheEntry) -> None:
+        self._table.put_item(
+            Item={
+                "PK": f"NEWS#{entry.symbol}",
+                "SK": "LATEST",
+                "fetched_at": entry.fetched_at.isoformat(),
+                "source": entry.source,
+                "payload": dumps_news_items(entry.items),
             }
         )
 

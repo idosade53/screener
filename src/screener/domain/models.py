@@ -275,6 +275,27 @@ class Scorecard:
 
 
 @dataclass(frozen=True)
+class CachedFundamentals:
+    """What the repository persists for a symbol's fundamentals (F4). Bundles the header
+    ``profile`` with the scored ``snapshot`` so a cache hit renders the whole dossier header with
+    **zero** external calls (PRD SC-2). Latest-only per symbol (PRD §10)."""
+
+    profile: CompanyProfile
+    snapshot: FundamentalsSnapshot
+
+
+@dataclass(frozen=True)
+class NewsCacheEntry:
+    """Cached company news for a symbol (F4). ``fetched_at`` drives the short-TTL freshness rule
+    (§4.3, ``news_cache_hours``). Latest-only per symbol."""
+
+    symbol: str
+    fetched_at: datetime  # UTC, tz-aware
+    source: str
+    items: tuple[NewsItem, ...]
+
+
+@dataclass(frozen=True)
 class Dossier:
     """The assembled report (PRD §4.1). ``ai_summary`` is filled by the optional stage (F6);
     ``notes`` carries footer DATA_ERROR/STALE annotations (§4.1 row 11)."""

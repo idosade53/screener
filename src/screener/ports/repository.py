@@ -14,8 +14,10 @@ from typing import Protocol
 
 from screener.domain.models import (
     Bar,
+    CachedFundamentals,
     DeliveryStatus,
     Indicators,
+    NewsCacheEntry,
     ScanSummary,
     SymbolScanResult,
     UniverseMember,
@@ -59,3 +61,11 @@ class ScreenerRepository(Protocol):
     def record_alert(
         self, scan_id: str, message: str, status: DeliveryStatus
     ) -> None: ...
+
+    # ---- fundamentals & news cache (Phase 4, PRD FR-6) ----
+    # Latest-only per symbol: a put overwrites the previous entry (PRD §10). ``get`` returns the
+    # cached value or ``None`` on a miss; freshness (§4.3) is decided by the caller, not here.
+    def get_fundamentals_snapshot(self, symbol: str) -> CachedFundamentals | None: ...
+    def put_fundamentals_snapshot(self, cached: CachedFundamentals) -> None: ...
+    def get_news_cache(self, symbol: str) -> NewsCacheEntry | None: ...
+    def put_news_cache(self, entry: NewsCacheEntry) -> None: ...
