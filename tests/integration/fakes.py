@@ -8,7 +8,14 @@ from collections.abc import Sequence
 from datetime import date, datetime, time
 from decimal import Decimal
 
-from screener.domain.models import Bar, PriceMode
+from screener.domain.errors import ProviderError
+from screener.domain.models import (
+    Bar,
+    CompanyProfile,
+    FundamentalsSnapshot,
+    NewsItem,
+    PriceMode,
+)
 from screener.ports.market_data import (
     BarFetchResult,
     Quote,
@@ -57,6 +64,57 @@ class FakeProvider:
 
     def validate_symbol(self, symbol: str) -> bool:
         return symbol in self.bars
+
+
+class FakeFundamentalsProvider:
+    """Serves a pre-seeded profile + snapshot per symbol, counting external calls so the
+    cache-hit path can be asserted to make zero calls (SC-2). ``fail`` forces a ProviderError to
+    exercise the fallback path (SC-4)."""
+
+    def __init__(self, *, source: str = "fake-fmp", fail: bool = False) -> None:
+        self.profiles: dict[str, CompanyProfile] = {}
+        self.snapshots: dict[str, FundamentalsSnapshot] = {}
+        self.fail = fail
+        self.calls = 0
+
+    def seed(self, profile: CompanyProfile, snapshot: FundamentalsSnapshot) -> None:
+        self.profiles[profile.symbol] = profile
+        self.snapshots[snapshot.symbol] = snapshot
+
+    def validate_symbol(self, symbol: str) -> bool:
+        return symbol in self.snapshots
+
+    def fetch_profile(self, symbol: str) -> CompanyProfile:
+        self.calls += 1
+        if self.fail or symbol not in self.profiles:
+            raise ProviderError(symbol)
+        return self.profiles[symbol]
+
+    def fetch_fundamentals(self, symbol: str) -> FundamentalsSnapshot:
+        self.calls += 1
+        if self.fail or symbol not in self.snapshots:
+            raise ProviderError(symbol)
+        return self.snapshots[symbol]
+
+
+class FakeNewsProvider:
+    """Serves pre-seeded news, counting calls. ``fail`` raises ProviderError (fallback path)."""
+
+    source = "fake-news"
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.items: dict[str, list[NewsItem]] = {}
+        self.fail = fail
+        self.calls = 0
+
+    def seed(self, symbol: str, items: list[NewsItem]) -> None:
+        self.items[symbol] = items
+
+    def fetch_company_news(self, symbol: str, since: date) -> list[NewsItem]:
+        self.calls += 1
+        if self.fail:
+            raise ProviderError(symbol)
+        return self.items.get(symbol, [])
 
 
 class FakeCalendar:

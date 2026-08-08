@@ -8,7 +8,11 @@ from dataclasses import dataclass
 
 from screener.adapters.calendar.xnys_calendar import XnysCalendar
 from screener.adapters.clock.system_clock import SystemClock
+from screener.adapters.fundamentals.fmp_provider import FmpFundamentalsProvider
+from screener.adapters.fundamentals.yfinance_provider import YFinanceFundamentalsProvider
 from screener.adapters.market_data.yfinance_provider import YFinanceProvider
+from screener.adapters.news.finnhub_provider import FinnhubNewsProvider
+from screener.adapters.news.yfinance_provider import YFinanceNewsProvider
 from screener.adapters.notify.console_notifier import ConsoleNotifier
 from screener.adapters.notify.telegram_notifier import TelegramNotifier
 from screener.adapters.repository.dynamodb_repository import DynamoDbScreenerRepository
@@ -16,10 +20,14 @@ from screener.adapters.repository.sqlite_repository import SqliteScreenerReposit
 from screener.bot.context import BotContext
 from screener.config import Settings, load_settings
 from screener.domain.errors import ConfigError
-from screener.domain.models import ScanType
+from screener.domain.models import Dossier, ScanType
+from screener.fundamentals.dossier import DossierService
+from screener.fundamentals.thresholds import ScorecardThresholds
 from screener.ports.calendar import TradingCalendar
 from screener.ports.clock import Clock
+from screener.ports.fundamentals import FundamentalsProvider
 from screener.ports.market_data import MarketDataProvider
+from screener.ports.news import NewsProvider
 from screener.ports.notifier import Notifier
 from screener.ports.repository import ScreenerRepository
 from screener.screener.criterion import Criterion, MA150ProximityCriterion
@@ -35,6 +43,7 @@ class Application:
     clock: Clock
     notifier: Notifier
     criteria: list[Criterion]
+    dossier_service: DossierService
 
     def pipeline(self) -> ScanPipeline:
         return ScanPipeline(
@@ -46,6 +55,11 @@ class Application:
             criteria=self.criteria,
             settings=self.settings,
         )
+
+    def build_dossier(
+        self, symbol: str, *, force_refresh: bool = False, with_ai: bool = False
+    ) -> Dossier:
+        return self.dossier_service.build(symbol, force_refresh=force_refresh, with_ai=with_ai)
 
 
 def build_application(settings: Settings | None = None) -> Application:
@@ -72,15 +86,55 @@ def build_application(settings: Settings | None = None) -> Application:
     else:
         notifier = ConsoleNotifier()
 
+    clock = SystemClock()
+    fundamentals, fundamentals_fallback = _build_fundamentals(cfg)
+    news, news_fallback = _build_news(cfg)
+    dossier_service = DossierService(
+        repo=repo,
+        fundamentals=fundamentals,
+        fundamentals_fallback=fundamentals_fallback,
+        news=news,
+        news_fallback=news_fallback,
+        clock=clock,
+        thresholds=ScorecardThresholds.default(),
+        summary=None,  # optional AI stage lands in F6
+        fundamentals_cache_days=cfg.fundamentals_cache_days,
+        news_cache_hours=cfg.news_cache_hours,
+        news_lookback_days=cfg.news_lookback_days,
+    )
+
     return Application(
         settings=cfg,
         repo=repo,
         provider=YFinanceProvider(),
         calendar=XnysCalendar(),
-        clock=SystemClock(),
+        clock=clock,
         notifier=notifier,
         criteria=criteria,
+        dossier_service=dossier_service,
     )
+
+
+def _build_fundamentals(
+    cfg: Settings,
+) -> tuple[FundamentalsProvider, FundamentalsProvider | None]:
+    """FMP primary with a yfinance fallback (PRD §8). Falls back to yfinance-only when no FMP key
+    is configured or yfinance is explicitly selected."""
+    yfin = YFinanceFundamentalsProvider()
+    if cfg.fundamentals_provider == "fmp" and cfg.fmp_api_key:
+        return FmpFundamentalsProvider(cfg.fmp_api_key), yfin
+    return yfin, None
+
+
+def _build_news(cfg: Settings) -> tuple[NewsProvider, NewsProvider | None]:
+    """Finnhub primary with a yfinance ``.news`` fallback (PRD §8)."""
+    yfin = YFinanceNewsProvider(max_items=cfg.news_max_items)
+    if cfg.news_provider == "finnhub" and cfg.finnhub_api_key:
+        return (
+            FinnhubNewsProvider(cfg.finnhub_api_key, max_items=cfg.news_max_items),
+            yfin,
+        )
+    return yfin, None
 
 
 def build_bot_context(app: Application) -> BotContext:
@@ -90,4 +144,5 @@ def build_bot_context(app: Application) -> BotContext:
         repo=app.repo,
         settings=app.settings,
         run_scan=lambda: app.pipeline().run(ScanType.MANUAL),
+        build_dossier=lambda symbol: app.build_dossier(symbol),
     )

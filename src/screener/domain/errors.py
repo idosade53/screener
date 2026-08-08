@@ -28,3 +28,8 @@ class RepositoryError(ScreenerError):
 
 class ConfigError(ScreenerError):
     """Invalid or missing configuration."""
+
+
+class UnknownSymbolError(ScreenerError):
+    """A dossier was requested for a symbol no provider recognises (PRD §5): the caller turns
+    this into a friendly rejection rather than a stack trace."""

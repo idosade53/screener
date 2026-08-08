@@ -18,6 +18,8 @@ def _default_news(symbol: str) -> list[dict[str, Any]]:
 
 
 class YFinanceNewsProvider:
+    source = "yfinance"  # labels the cache entry (PRD §10)
+
     def __init__(
         self,
         *,
