@@ -17,6 +17,7 @@ from screener.adapters.notify.console_notifier import ConsoleNotifier
 from screener.adapters.notify.telegram_notifier import TelegramNotifier
 from screener.adapters.repository.dynamodb_repository import DynamoDbScreenerRepository
 from screener.adapters.repository.sqlite_repository import SqliteScreenerRepository
+from screener.adapters.summary.anthropic_provider import AnthropicSummaryProvider
 from screener.bot.context import BotContext
 from screener.config import Settings, load_settings
 from screener.domain.errors import ConfigError
@@ -30,6 +31,7 @@ from screener.ports.market_data import MarketDataProvider
 from screener.ports.news import NewsProvider
 from screener.ports.notifier import Notifier
 from screener.ports.repository import ScreenerRepository
+from screener.ports.summary import SummaryProvider
 from screener.screener.criterion import Criterion, MA150ProximityCriterion
 from screener.screener.pipeline import ScanPipeline
 
@@ -97,7 +99,7 @@ def build_application(settings: Settings | None = None) -> Application:
         news_fallback=news_fallback,
         clock=clock,
         thresholds=ScorecardThresholds.default(),
-        summary=None,  # optional AI stage lands in F6
+        summary=_build_summary(cfg),
         fundamentals_cache_days=cfg.fundamentals_cache_days,
         news_cache_hours=cfg.news_cache_hours,
         news_lookback_days=cfg.news_lookback_days,
@@ -126,6 +128,14 @@ def _build_fundamentals(
     return yfin, None
 
 
+def _build_summary(cfg: Settings) -> SummaryProvider | None:
+    """The optional AI stage (F6). Built only when an Anthropic key is configured; whether it
+    actually runs is still gated per-call by ``with_ai`` (CLI ``--ai`` / ``dossier_ai_summary``)."""
+    if not cfg.anthropic_api_key:
+        return None
+    return AnthropicSummaryProvider(cfg.anthropic_api_key, max_uses=cfg.news_max_items)
+
+
 def _build_news(cfg: Settings) -> tuple[NewsProvider, NewsProvider | None]:
     """Finnhub primary with a yfinance ``.news`` fallback (PRD §8)."""
     yfin = YFinanceNewsProvider(max_items=cfg.news_max_items)
@@ -144,5 +154,7 @@ def build_bot_context(app: Application) -> BotContext:
         repo=app.repo,
         settings=app.settings,
         run_scan=lambda: app.pipeline().run(ScanType.MANUAL),
-        build_dossier=lambda symbol: app.build_dossier(symbol),
+        build_dossier=lambda symbol: app.build_dossier(
+            symbol, with_ai=app.settings.dossier_ai_summary
+        ),
     )

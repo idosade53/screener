@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # the zero-key yfinance fallback.
     fmp_api_key: str | None = None
     finnhub_api_key: str | None = None
+    # AI summary (F6): the Anthropic key gates the optional summary stage. Absent → no AI adapter
+    # is wired and `--ai`/`dossier_ai_summary` are silently no-ops.
+    anthropic_api_key: str | None = None
     fundamentals_provider: Literal["fmp", "yfinance"] = "fmp"
     news_provider: Literal["finnhub", "yfinance"] = "finnhub"
     # Caching windows (§4.3): fundamentals change only on an earnings release; news is short-lived.

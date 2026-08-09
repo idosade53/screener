@@ -18,6 +18,7 @@ forbidden_modules =
     yfinance
     boto3
     requests
+    anthropic
 
 # Rule 2: core (domain, indicators, screener, ports) never imports adapters or any SDK.
 [importlinter:contract:core-has-no-sdk-or-adapters]
@@ -35,6 +36,7 @@ forbidden_modules =
     yfinance
     requests
     telegram
+    anthropic
 
 # Rule 3a: only composition may instantiate adapters — bot uses ports/screener only.
 [importlinter:contract:bot-uses-ports-only]
