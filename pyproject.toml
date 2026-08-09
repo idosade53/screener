@@ -16,6 +16,7 @@ pydantic = "^2.9"
 pydantic-settings = "^2.6"
 httpx = "^0.28"
 boto3 = "^1.35"
+anthropic = "^0.121.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"

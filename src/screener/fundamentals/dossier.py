@@ -79,7 +79,9 @@ class DossierService:
             notes=tuple(notes),
         )
         if with_ai and self.summary is not None:
-            dossier = replace(dossier, ai_summary=self._summarize(dossier, notes))
+            # _summarize may append a degradation note; re-snapshot notes so it reaches the footer.
+            ai_summary = self._summarize(dossier, notes)
+            dossier = replace(dossier, ai_summary=ai_summary, notes=tuple(notes))
         return dossier
 
     # ------------------------------------------------------------ fundamentals

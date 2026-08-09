@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from screener.adapters.repository.sqlite_repository import SqliteScreenerRepository
-from screener.domain.errors import UnknownSymbolError
-from screener.domain.models import CompanyProfile, FundamentalsSnapshot, NewsItem
+from screener.domain.errors import ProviderError, UnknownSymbolError
+from screener.domain.models import CompanyProfile, Dossier, FundamentalsSnapshot, NewsItem
 from screener.fundamentals.dossier import DossierService
 from screener.fundamentals.formatters import format_dossier
 from tests.integration.fakes import FakeFundamentalsProvider, FakeNewsProvider, FrozenClock
@@ -182,3 +182,51 @@ def test_unknown_symbol_raises(repo: SqliteScreenerRepository) -> None:
     svc = _service(repo, FakeFundamentalsProvider(), FakeNewsProvider())
     with pytest.raises(UnknownSymbolError):
         svc.build("NOPE")
+
+
+# --- F6: optional AI summary (SC-5) -----------------------------------------------
+class _SpySummary:
+    """Records how many times the AI stage is invoked; optionally raises to prove the guard."""
+
+    def __init__(self, *, text: str = "AI read.", fail: bool = False) -> None:
+        self._text = text
+        self._fail = fail
+        self.calls = 0
+
+    def summarize(self, dossier: Dossier) -> str:
+        self.calls += 1
+        if self._fail:
+            raise ProviderError("summary down")
+        return self._text
+
+
+def _ai_service(repo: SqliteScreenerRepository, summary: _SpySummary) -> DossierService:
+    fund = FakeFundamentalsProvider()
+    fund.seed(_profile("AAPL"), _snapshot("AAPL"))
+    news = FakeNewsProvider()
+    news.seed("AAPL", _news("AAPL"))
+    return _service(repo, fund, news, summary=summary)
+
+
+def test_ai_on_adds_exactly_one_call_and_populates_summary(repo: SqliteScreenerRepository) -> None:
+    spy = _SpySummary(text="Net: constructive.")
+    dossier = _ai_service(repo, spy).build("AAPL", with_ai=True)
+    assert spy.calls == 1  # SC-5: on adds exactly one summarize stage
+    assert dossier.ai_summary == "Net: constructive."
+    assert "🤖 AI read" in format_dossier(dossier)
+
+
+def test_ai_off_makes_zero_calls(repo: SqliteScreenerRepository) -> None:
+    spy = _SpySummary()
+    dossier = _ai_service(repo, spy).build("AAPL")  # default with_ai=False
+    assert spy.calls == 0  # SC-5: off adds none
+    assert dossier.ai_summary is None
+    assert "🤖 AI read" not in format_dossier(dossier)
+
+
+def test_ai_failure_degrades_to_note_not_crash(repo: SqliteScreenerRepository) -> None:
+    spy = _SpySummary(fail=True)
+    dossier = _ai_service(repo, spy).build("AAPL", with_ai=True)
+    assert spy.calls == 1
+    assert dossier.ai_summary is None  # still a valid dossier
+    assert any("AI summary: unavailable" in n for n in dossier.notes)

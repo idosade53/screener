@@ -201,7 +201,11 @@ existing repository, delivered via `/dossier` (Telegram) and `screener dossier` 
 optional off-by-default Claude Haiku summary. Milestone IDs are `F`-prefixed to avoid colliding
 with the Phase-1 `M0–M7` above; tasks are `F<n>T<nn>`; branch names `p4-<slug>`.
 
-**Status: F1 done and green (135 tests); F2–F6 not started (PRD approved 2026-08-08).**
+**Status: F1–F6 done and green (191 tests). F2–F5 landed one branch/PR each (`p4-scorecard-engine`,
+`p4-provider-adapters`, `p4-caching-persistence`, `p4-dossier-delivery`, PRs #6–#9). Live `screener
+dossier` verified end-to-end against FMP + Finnhub. F6 built the optional AI summary (branch
+`p4-ai-summary`). A live `--ai` run exposed two defects and a change of direction on news-reading —
+tracked in **F7** below; the F6 AI stage is opt-in / off by default, so main stays safe.**
 
 ## F1 — Ports + domain models
 
@@ -220,49 +224,122 @@ with the Phase-1 `M0–M7` above; tasks are `F<n>T<nn>`; branch names `p4-<slug>
 
 ## F2 — Scorecard engine (pure)
 
-- [ ] **F2T01** `screener/fundamentals/thresholds.py` — `ScorecardThresholds` config object (§4.2)
-- [ ] **F2T02** `screener/fundamentals/scorecard.py::score(snapshot, thresholds) -> Scorecard` —
-      no provider/telegram/db knowledge (layered like `screener/criterion.py`)
-- [ ] **F2T03** Unit tests vs. 5 hand-checked fixtures: mega-cap, value, growth-unprofitable,
-      high-debt, insufficient-data (SC-3)
+- [x] **F2T01** `screener/fundamentals/thresholds.py` — `ScorecardThresholds` config object (§4.2),
+      frozen dataclass of `Decimal`s with a `default()` classmethod.
+- [x] **F2T02** `screener/fundamentals/scorecard.py::score(snapshot, thresholds, *, today, price=None)
+      -> Scorecard` — no provider/telegram/db knowledge (layered like `screener/criterion.py`).
+      *Signature note:* `today` anchors earnings timing (holiday-agnostic business-day count — a
+      calendar-accurate count is a §13 refinement); `price` anchors analyst upside (not on the
+      snapshot). Missing metrics degrade to `Flag.NA`, never raise. `.importlinter` extended with the
+      `screener.fundamentals` core layer.
+- [x] **F2T03** Unit tests vs. 5 hand-checked fixtures: mega-cap, value, growth-unprofitable,
+      high-debt, insufficient-data (SC-3) — `tests/unit/test_scorecard.py`.
 
 ## F3 — Provider adapters
 
-- [ ] **F3T01** `adapters/fundamentals/fmp_provider.py` — FMP profile/ratios-ttm/key-metrics/
-      income-statement/price-target, `Decimal` at boundary, injectable `http_get_fn`, `_with_retries`
-- [ ] **F3T02** `adapters/fundamentals/yfinance_provider.py` — fallback via existing yfinance dep
-- [ ] **F3T03** `adapters/news/finnhub_provider.py` — `company-news`, dedup/sort/cap, yfinance
-      `.news` fallback
-- [ ] **F3T04** Contract tests replay recorded JSON frames (no network); graceful degradation on
-      primary-provider failure verified (SC-4)
+- [x] **F3T01** `adapters/fundamentals/fmp_provider.py` — FMP profile/ratios-ttm/key-metrics-ttm/
+      income-statement/price-target-consensus/earning-calendar, `Decimal` at boundary, injectable
+      `http_get_fn`, internal retry/backoff. Partial-endpoint outage → `None` sections; total outage
+      (no profile) → `ProviderError` (the fallback signal).
+- [x] **F3T02** `adapters/fundamentals/yfinance_provider.py` — fallback via existing yfinance dep
+      (`.info` + `.calendar`), injectable `ticker_fn`; normalises yfinance's percentage `debtToEquity`.
+- [x] **F3T03** `adapters/news/finnhub_provider.py` — `company-news`, dedup/sort/cap, injectable
+      `http_get_fn`; `adapters/news/yfinance_provider.py` is the `.news` fallback (both flat + nested
+      yfinance shapes).
+- [x] **F3T04** Contract tests replay recorded JSON frames (no network); graceful degradation on
+      primary-provider failure verified (SC-4) — `tests/contract/test_fmp_provider.py`,
+      `test_yfinance_fundamentals.py`, `test_news_providers.py`.
+- [x] **F3T05** *(pulled from F6T01)* `config.py` fields F3/F5 need: `fmp_api_key`, `finnhub_api_key`,
+      `fundamentals_provider`, `news_provider`, `news_lookback_days`, `news_max_items`,
+      `news_cache_hours`, `fundamentals_cache_days`, plus `dossier_ai_summary` (default `false`).
+      *Env note:* read under the `SCREENER_` prefix (e.g. `SCREENER_FMP_API_KEY`), like the other
+      secrets — the PRD's unprefixed names in `.env` are not picked up. `anthropic_api_key` +
+      `secrets.py`/SSM wiring stay in F6.
 
 ## F4 — Caching & persistence
 
-- [ ] **F4T01** Repository-port methods: `get/put_fundamentals_snapshot`, `get/put_news_cache` (FR-6)
-- [ ] **F4T02** SQLite tables `fundamentals_snapshot`, `news_cache`
-      (`adapters/repository/sqlite_repository.py`); document in `docs/db-schema.md`
-- [ ] **F4T03** DynamoDB items `PK=FUND#<symbol>` / `PK=NEWS#<symbol>`
-      (`adapters/repository/dynamodb_repository.py`)
-- [ ] **F4T04** New cases added to the shared `tests/contract/repository_contract.py` (both backends
-      pass); freshness rule (§4.3: `next_earnings_date` + TTL) covered
+- [x] **F4T01** Repository-port methods: `get/put_fundamentals_snapshot`, `get/put_news_cache` (FR-6).
+      Domain gains `CachedFundamentals` (profile **+** snapshot, so a cache hit renders the header with
+      zero calls — SC-2) and `NewsCacheEntry`.
+- [x] **F4T02** SQLite tables `fundamentals_snapshot`, `news_cache`
+      (`adapters/repository/sqlite_repository.py`); documented in `docs/db-schema.md`.
+- [x] **F4T03** DynamoDB items `PK=FUND#<symbol>,SK=SNAPSHOT` / `PK=NEWS#<symbol>,SK=LATEST`
+      (`adapters/repository/dynamodb_repository.py`). Both backends serialise via one shared
+      `_fundamentals_codec` that tags `Decimal`/`date`/`datetime` so values round-trip exactly.
+- [x] **F4T04** New cases added to the shared `tests/contract/repository_contract.py` (both backends
+      pass); freshness fields (`fetched_at`, `next_earnings_date`) preserved. *(The §4.3 freshness
+      *decision* lives in the F5 assembler, not the repo — the repo just stores/returns the values.)*
 
 ## F5 — Dossier assembly + delivery
 
-- [ ] **F5T01** `screener/fundamentals/dossier.py::build_dossier` — cache → providers → scorecard →
-      optional summary → `Dossier`
-- [ ] **F5T02** `screener/fundamentals/formatters.py::format_dossier` — Telegram/CLI text
-- [ ] **F5T03** `/dossier` (alias `/dd`) command in `bot/commands.py` + `bot/dispatch.py`; authorized
-      chat only (reuses `bot/auth.py`)
-- [ ] **F5T04** `screener dossier <SYMBOL> [--no-cache] [--ai]` in `composition/cli.py`
-- [ ] **F5T05** Wiring in `composition/wiring.py`; end-to-end against fakes; cache-hit path makes
-      zero external calls (SC-2)
+- [x] **F5T01** `screener/fundamentals/dossier.py::DossierService.build` — cache → providers
+      (primary, fallback on `ProviderError`) → scorecard → optional summary → `Dossier`.
+      *Shape note:* implemented as an injectable `DossierService` (holds the selected providers/repo/
+      clock/thresholds) rather than a free `build_dossier` function. §4.3 freshness: fundamentals fresh
+      until the *later* of `fetched_at + fundamentals_cache_days` or `next_earnings_date`; news on a
+      `news_cache_hours` TTL. Unknown symbol → `UnknownSymbolError` (new).
+- [x] **F5T02** `screener/fundamentals/formatters.py::format_dossier` — one shared Telegram/CLI text
+      renderer; missing metrics render `n/a`; footer carries sources + fallback notes.
+- [x] **F5T03** `/dossier` (alias `/dd`) command in `bot/commands.py`; authorized chat only (reuses
+      `bot/auth.py`). *No `bot/dispatch.py` change needed* — dispatch already routes via `COMMANDS`
+      (auth runs first) and both keys point at `cmd_dossier`.
+- [x] **F5T04** `screener dossier <SYMBOL> [--no-cache] [--ai]` in `composition/cli.py`.
+- [x] **F5T05** Wiring in `composition/wiring.py` (`Application.build_dossier`, `DossierService`
+      construction, `build_bot_context` passes the callable); end-to-end against fakes; cache-hit path
+      makes zero external calls (SC-2) — `tests/integration/test_dossier.py`. Summary provider wired
+      `None` (AI deferred to F6).
+- [ ] **F5T06** *(follow-up)* Plumb the current price (last scan / a live quote) into
+      `build_dossier`→`score(price=…)` so the **Analyst view** row scores instead of rendering `⚪ NA`.
+      Deferred from F5 to keep scope tight; header price also reused from the last scan (PRD §4.1 row 1).
 
 ## F6 — Optional AI summary
 
-- [ ] **F6T01** `config.py` fields: `fmp_api_key`, `finnhub_api_key`, `anthropic_api_key`,
-      `fundamentals_provider`, `news_provider`, `dossier_ai_summary` (default `false`),
-      `news_lookback_days`, `news_max_items`, `news_cache_hours`, `fundamentals_cache_days`;
-      secrets via `.env` + SSM (`composition/secrets.py`)
-- [ ] **F6T02** `adapters/summary/anthropic_provider.py` — Claude Haiku 4.5 via Messages API,
-      structured-data-only prompt, behind `SummaryProvider`; mocked in tests (no network)
-- [ ] **F6T03** Toggle verified: `--ai`/config on adds exactly one LLM call, off adds none (SC-5)
+- [x] **F6T01** `config.py` — added `anthropic_api_key` (the rest landed in F3T05). Read under the
+      `SCREENER_` prefix like the other secrets, so the existing `composition/secrets.py` SSM overlay
+      picks it up with no secrets.py change.
+- [x] **F6T02** `adapters/summary/anthropic_provider.py` — `AnthropicSummaryProvider` behind
+      `SummaryProvider`, injectable `create_message_fn` seam (mocked in tests, no network).
+      **Deviation from the PRD's headline-only Haiku plan (approved during build):** the summary
+      **reads the news articles behind the links** via Claude's server-side web-fetch tool and judges
+      what's critical, so it runs on **Claude Sonnet 5** (stronger cross-article judgment; clean
+      web-fetch support) rather than Haiku 4.5. Output is one plain-text "AI read" (Strengths /
+      Watch-outs / News / Near-term / Net), grounded and non-advisory. `max_uses` = `news_max_items`
+      bounds fetch cost; a `pause_turn` server-tool loop is resumed (bounded); any SDK error →
+      `ProviderError`, which the F5 assembler degrades to an "AI summary: unavailable." footer note.
+      Per-dossier cost is now above the PRD's ~$0.001–0.005 headline-only estimate — expected, and
+      the stage stays opt-in / off by default.
+- [x] **F6T03** Toggle verified (SC-5): `tests/integration/test_dossier.py` proves `--ai`/`with_ai`
+      on invokes the summary stage **exactly once** and populates `ai_summary`, off invokes it
+      **zero** times, and a failing provider degrades to the footer note without crashing. Adapter
+      units in `tests/unit/test_anthropic_summary.py`. `.importlinter` extended to keep the
+      `anthropic` SDK out of the core; `anthropic` added as a runtime dep. **Remaining:** the live
+      `screener dossier <SYM> --ai` end-to-end with a real `SCREENER_ANTHROPIC_API_KEY`.
+
+## F7 — Follow-ups from the F6 live run
+
+A live `screener dossier CAT --ai` run exposed two defects. Both are deferred (F6 landed as-is, AI
+stage off by default); this milestone tracks the fixes and the news-reading change of direction.
+
+- [ ] **F7T01** *News-reading rework — move off `web_fetch` to a richer news API.* The F6 design has
+      Claude read articles via the server-side `web_fetch` tool, but the URLs it's given are Finnhub
+      `company-news` API redirects (`finnhub.io/api/news?id=…`) and the real publisher pages (Yahoo,
+      etc.) bot-block, so most fetches return "page blocked" — and the `🤖 AI read` leaked the
+      model's between-fetch narration instead of the clean labelled read. Plan:
+      - Integrate a **richer news source behind the existing `NewsProvider` port** — **Alpha Vantage
+        News & Sentiment** (free `NEWS_SENTIMENT`: title + fuller summary + sentiment + url) or
+        **Tiingo**; add `alphavantage_api_key`/`tiingo_api_key` to `config.py` (+ `.env`/SSM).
+      - Pass `NewsItem.summary` into the summary prompt — Finnhub already populates it
+        (`adapters/news/finnhub_provider.py::_to_item`) but `AnthropicSummaryProvider.
+        _render_dossier_facts` currently drops it, leaving the model nothing when fetch fails.
+      - Fix `AnthropicSummaryProvider._extract_text` to return **only the final read** (it currently
+        concatenates the inter-tool narration text blocks).
+      - Raise `max_tokens` (700 → ~1500) and instruct the model not to narrate its fetching; drop or
+        soften the `web_fetch` tool now that summaries carry the substance.
+- [ ] **F7T02** *FMP free-tier 403 defeats the yfinance fallback (fundamentals all `n/a`).* FMP's
+      legacy `/api/v3/` endpoints now return `403 Forbidden` for the free key.
+      `adapters/fundamentals/fmp_provider.py::_default_get` never checks the HTTP status, and
+      `_fetch`/`_first` treat FMP's `{"Error Message": …}` error body as a valid hit — so
+      `fetch_profile` never raises `ProviderError`, the yfinance fallback never fires, and the dossier
+      renders all-`n/a` labelled `source: fmp`. Fix: reject non-2xx responses and error payloads
+      (raise / return `None`) so `ProviderError` fires and yfinance serves fundamentals; optionally
+      migrate to FMP's current `stable` API.
