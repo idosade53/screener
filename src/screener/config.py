@@ -58,11 +58,14 @@ class Settings(BaseSettings):
     # the zero-key yfinance fallback.
     fmp_api_key: str | None = None
     finnhub_api_key: str | None = None
+    # Alpha Vantage NEWS_SENTIMENT (F7): a richer news source (fuller summaries + sentiment) than
+    # Finnhub; select with news_provider="alphavantage". Absent key → falls back to yfinance news.
+    alphavantage_api_key: str | None = None
     # AI summary (F6): the Anthropic key gates the optional summary stage. Absent → no AI adapter
     # is wired and `--ai`/`dossier_ai_summary` are silently no-ops.
     anthropic_api_key: str | None = None
     fundamentals_provider: Literal["fmp", "yfinance"] = "fmp"
-    news_provider: Literal["finnhub", "yfinance"] = "finnhub"
+    news_provider: Literal["finnhub", "yfinance", "alphavantage"] = "finnhub"
     # Caching windows (§4.3): fundamentals change only on an earnings release; news is short-lived.
     fundamentals_cache_days: int = 1
     news_cache_hours: int = 6

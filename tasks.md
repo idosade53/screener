@@ -201,11 +201,14 @@ existing repository, delivered via `/dossier` (Telegram) and `screener dossier` 
 optional off-by-default Claude Haiku summary. Milestone IDs are `F`-prefixed to avoid colliding
 with the Phase-1 `M0–M7` above; tasks are `F<n>T<nn>`; branch names `p4-<slug>`.
 
-**Status: F1–F6 done and green (191 tests). F2–F5 landed one branch/PR each (`p4-scorecard-engine`,
+**Status: F1–F7 done and green (199 tests). F2–F5 landed one branch/PR each (`p4-scorecard-engine`,
 `p4-provider-adapters`, `p4-caching-persistence`, `p4-dossier-delivery`, PRs #6–#9). Live `screener
 dossier` verified end-to-end against FMP + Finnhub. F6 built the optional AI summary (branch
 `p4-ai-summary`). A live `--ai` run exposed two defects and a change of direction on news-reading —
-tracked in **F7** below; the F6 AI stage is opt-in / off by default, so main stays safe.**
+fixed in **F7** (branch `p4-f7-followups`): Alpha Vantage news source + summaries fed to the AI read
+(web_fetch removed), and the FMP adapter migrated to the `stable` API with error-body rejection so
+the yfinance fallback fires. Remaining: the live `--ai` + Alpha Vantage end-to-end re-run with real
+keys (unit/contract-covered, no network in CI).**
 
 ## F1 — Ports + domain models
 
@@ -320,7 +323,7 @@ tracked in **F7** below; the F6 AI stage is opt-in / off by default, so main sta
 A live `screener dossier CAT --ai` run exposed two defects. Both are deferred (F6 landed as-is, AI
 stage off by default); this milestone tracks the fixes and the news-reading change of direction.
 
-- [ ] **F7T01** *News-reading rework — move off `web_fetch` to a richer news API.* The F6 design has
+- [x] **F7T01** *News-reading rework — move off `web_fetch` to a richer news API.* The F6 design has
       Claude read articles via the server-side `web_fetch` tool, but the URLs it's given are Finnhub
       `company-news` API redirects (`finnhub.io/api/news?id=…`) and the real publisher pages (Yahoo,
       etc.) bot-block, so most fetches return "page blocked" — and the `🤖 AI read` leaked the
@@ -335,7 +338,14 @@ stage off by default); this milestone tracks the fixes and the news-reading chan
         concatenates the inter-tool narration text blocks).
       - Raise `max_tokens` (700 → ~1500) and instruct the model not to narrate its fetching; drop or
         soften the `web_fetch` tool now that summaries carry the substance.
-- [ ] **F7T02** *FMP free-tier 403 defeats the yfinance fallback (fundamentals all `n/a`).* FMP's
+      - **Landed:** new `adapters/news/alphavantage_provider.py` (`NEWS_SENTIMENT`; per-ticker
+        sentiment folded into `NewsItem.summary`) behind the `NewsProvider` port; `config.py`
+        `alphavantage_api_key` + `news_provider="alphavantage"`; `_build_news` wires it primary with
+        the yfinance fallback. `AnthropicSummaryProvider` reworked: `_render_dossier_facts` now emits
+        each item's summary (URLs dropped), `web_fetch` + the `pause_turn` loop **removed**,
+        `max_tokens` 700→1500, system prompt says use the summaries / don't narrate fetching, and
+        `_extract_text` returns only the last (final) text block. Unit + contract tested (no network).
+- [x] **F7T02** *FMP free-tier 403 defeats the yfinance fallback (fundamentals all `n/a`).* FMP's
       legacy `/api/v3/` endpoints now return `403 Forbidden` for the free key.
       `adapters/fundamentals/fmp_provider.py::_default_get` never checks the HTTP status, and
       `_fetch`/`_first` treat FMP's `{"Error Message": …}` error body as a valid hit — so
@@ -343,3 +353,10 @@ stage off by default); this milestone tracks the fixes and the news-reading chan
       renders all-`n/a` labelled `source: fmp`. Fix: reject non-2xx responses and error payloads
       (raise / return `None`) so `ProviderError` fires and yfinance serves fundamentals; optionally
       migrate to FMP's current `stable` API.
+      - **Landed:** `_default_get` now calls `raise_for_status()`; `_fetch` treats an
+        `{"Error Message": …}` body as a miss (`_is_error`), so `fetch_profile`/`fetch_fundamentals`/
+        `validate_symbol` hit the total-outage path and raise `ProviderError` → yfinance fallback
+        fires. Migrated to the `stable` API (`/stable/<resource>?symbol=…`); a `_pick` helper reads
+        each metric under both the `stable` and legacy field names, so absent fields degrade to
+        `None` rather than crash. Contract frames re-recorded to the `stable` shapes; regression +
+        end-to-end fallback tests added. *Field names must be spot-checked on the first live run.*

@@ -11,6 +11,7 @@ from screener.adapters.clock.system_clock import SystemClock
 from screener.adapters.fundamentals.fmp_provider import FmpFundamentalsProvider
 from screener.adapters.fundamentals.yfinance_provider import YFinanceFundamentalsProvider
 from screener.adapters.market_data.yfinance_provider import YFinanceProvider
+from screener.adapters.news.alphavantage_provider import AlphaVantageNewsProvider
 from screener.adapters.news.finnhub_provider import FinnhubNewsProvider
 from screener.adapters.news.yfinance_provider import YFinanceNewsProvider
 from screener.adapters.notify.console_notifier import ConsoleNotifier
@@ -133,12 +134,18 @@ def _build_summary(cfg: Settings) -> SummaryProvider | None:
     actually runs is still gated per-call by ``with_ai`` (CLI ``--ai`` / ``dossier_ai_summary``)."""
     if not cfg.anthropic_api_key:
         return None
-    return AnthropicSummaryProvider(cfg.anthropic_api_key, max_uses=cfg.news_max_items)
+    return AnthropicSummaryProvider(cfg.anthropic_api_key)
 
 
 def _build_news(cfg: Settings) -> tuple[NewsProvider, NewsProvider | None]:
-    """Finnhub primary with a yfinance ``.news`` fallback (PRD §8)."""
+    """Selected news primary with a yfinance ``.news`` fallback (PRD §8, F7). Alpha Vantage or
+    Finnhub when its key is set; otherwise yfinance-only."""
     yfin = YFinanceNewsProvider(max_items=cfg.news_max_items)
+    if cfg.news_provider == "alphavantage" and cfg.alphavantage_api_key:
+        return (
+            AlphaVantageNewsProvider(cfg.alphavantage_api_key, max_items=cfg.news_max_items),
+            yfin,
+        )
     if cfg.news_provider == "finnhub" and cfg.finnhub_api_key:
         return (
             FinnhubNewsProvider(cfg.finnhub_api_key, max_items=cfg.news_max_items),

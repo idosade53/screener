@@ -1,15 +1,16 @@
-"""Anthropic implementation of ``SummaryProvider`` (F6, PRD FR-7). The optional AI stage: given an
-assembled ``Dossier``, it asks Claude to **read the news articles behind the links** (via the
-server-side web-fetch tool), judge whether anything is critical, and return one plain-English
-"AI read". Off by default — only wired when an Anthropic key is configured.
+"""Anthropic implementation of ``SummaryProvider`` (F6, reworked in F7T01). The optional AI stage:
+given an assembled ``Dossier``, it judges what's material across the fundamentals and the news
+summaries and returns one plain-English "AI read". Off by default — only wired when an Anthropic
+key is configured.
 
 Design (mirrors the other adapters): the network goes through an injectable ``create_message_fn``
 seam so unit tests drive it with no network. Only the structured data already on the ``Dossier`` is
-sent — plus the news URLs, which is what authorises web-fetch (it fetches only URLs already present
-in the conversation, never arbitrary browsing). A server-tool turn can pause (``stop_reason ==
-"pause_turn"``); we resume by echoing the assistant turn back, bounded so it can't loop forever. On
-any API/transport failure this raises ``ProviderError`` — the F5 assembler catches it and degrades
-to a footer note, so a failed summary never breaks the dossier.
+sent — including each news item's ``summary`` text, which now carries the substance. (F6 had Claude
+open the article URLs with the server-side web-fetch tool, but the Finnhub redirect URLs led to
+bot-blocked publisher pages and the read leaked the model's between-fetch narration; F7 drops
+web-fetch and feeds the news summaries directly.) On any API/transport failure this raises
+``ProviderError`` — the F5 assembler catches it and degrades to a footer note, so a failed summary
+never breaks the dossier.
 """
 
 from __future__ import annotations
@@ -21,23 +22,22 @@ from typing import Any
 from screener.domain.errors import ProviderError
 from screener.domain.models import Dossier, FundamentalsSnapshot
 
-# messages.create(**kwargs) -> Message-like object (.content: list of blocks, .stop_reason: str).
-# Injected so tests need neither the network nor the anthropic SDK.
+# messages.create(**kwargs) -> Message-like object (.content: list of blocks). Injected so tests
+# need neither the network nor the anthropic SDK.
 CreateMessageFn = Callable[..., Any]
 
 _MODEL = "claude-sonnet-5"
-_MAX_TOKENS = 700
-_MAX_CONTINUATIONS = 5  # bound the server-tool pause_turn resume loop
+_MAX_TOKENS = 1500
 
 _SYSTEM = """You are an equity research assistant writing a short "AI read" of a stock dossier.
 
 You are given structured fundamentals, a green/yellow/red scorecard, and a list of recent news
-headlines each with a URL. Use the web-fetch tool to open and read the article behind each URL,
-then write the read.
+items, each with a short summary of the article. Base the read on the summaries and the structured
+data provided — do not narrate any fetching or browsing, and do not ask for the full articles.
 
 Rules:
-- Ground every statement in the structured data provided or the article contents you fetched.
-  Never introduce outside facts or invented numbers.
+- Ground every statement in the structured data or the news summaries provided. Never introduce
+  outside facts or invented numbers.
 - For the news, judge what is genuinely material — regulatory/legal action, guidance changes,
   M&A, leadership changes, demand shifts — versus routine coverage. Call out anything critical;
   do not just restate headlines.
@@ -47,7 +47,7 @@ Rules:
 Output plain text only (no markdown), as these labelled lines, each one line, ~120-200 words total:
 Strengths: <the strongest green/positive points>
 Watch-outs: <the reds/yellows and the main risk>
-News: <what the articles actually say, flagging anything critical vs. routine>
+News: <what the summaries actually say, flagging anything critical vs. routine>
 Near-term: <earnings timing and any imminent catalyst>
 Net: <a soft synthesised read of how the greens, reds, and news balance out — a lean, not advice>
 """
@@ -60,36 +60,22 @@ class AnthropicSummaryProvider:
         *,
         create_message_fn: CreateMessageFn | None = None,
         model: str = _MODEL,
-        max_uses: int = 10,
         max_tokens: int = _MAX_TOKENS,
     ) -> None:
         self._create = create_message_fn or _default_create(api_key)
         self._model = model
-        self._max_uses = max_uses
         self._max_tokens = max_tokens
 
     def summarize(self, dossier: Dossier) -> str:
-        # web_fetch only retrieves URLs already in the conversation, so the news URLs in the prompt
-        # are what it may open; max_uses bounds the fetch count (and therefore the cost).
-        tools = [{"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": self._max_uses}]
-        messages: list[dict[str, Any]] = [
-            {"role": "user", "content": _render_dossier_facts(dossier)}
-        ]
+        messages = [{"role": "user", "content": _render_dossier_facts(dossier)}]
         try:
-            for _ in range(_MAX_CONTINUATIONS + 1):
-                response = self._create(
-                    model=self._model,
-                    max_tokens=self._max_tokens,
-                    system=_SYSTEM,
-                    tools=tools,
-                    output_config={"effort": "medium"},
-                    messages=messages,
-                )
-                if getattr(response, "stop_reason", None) != "pause_turn":
-                    return _extract_text(response)
-                # Server-tool loop paused mid-turn; resume by echoing the assistant turn back.
-                messages.append({"role": "assistant", "content": response.content})
-            raise ProviderError("Anthropic summary did not finish (pause_turn loop exhausted)")
+            response = self._create(
+                model=self._model,
+                max_tokens=self._max_tokens,
+                system=_SYSTEM,
+                messages=messages,
+            )
+            return _extract_text(response)
         except ProviderError:
             raise
         except Exception as exc:  # noqa: BLE001 — normalise any SDK/transport error to the port signal
@@ -110,20 +96,21 @@ def _default_create(api_key: str) -> CreateMessageFn:
 
 
 def _extract_text(response: Any) -> str:
+    # Return only the final read — the last non-empty text block, not a concatenation (F7T01: the
+    # old join leaked any inter-tool narration that preceded the read).
     parts = [
-        block.text
+        block.text.strip()
         for block in getattr(response, "content", [])
-        if getattr(block, "type", None) == "text"
+        if getattr(block, "type", None) == "text" and getattr(block, "text", "").strip()
     ]
-    text = "\n".join(p.strip() for p in parts if p and p.strip())
-    if not text:
+    if not parts:
         raise ProviderError("Anthropic summary returned no text")
-    return text
+    return str(parts[-1])
 
 
 def _render_dossier_facts(dossier: Dossier) -> str:
-    """The prompt payload: structured facts + the news list *with URLs*. Pure, so the exact bytes
-    sent to the model are unit-testable without a network call."""
+    """The prompt payload: structured facts + the news list with each item's summary. Pure, so the
+    exact bytes sent to the model are unit-testable without a network call."""
     p, s = dossier.profile, dossier.snapshot
     lines: list[str] = [
         f"Company: {p.symbol} — {p.name}",
@@ -138,12 +125,12 @@ def _render_dossier_facts(dossier: Dossier) -> str:
     lines += ["", "Fundamentals (only known metrics shown):"]
     lines += [f"- {label}: {value}" for label, value in _metrics(s) if value is not None]
 
-    lines += ["", "Recent news (fetch each URL to read the full article):"]
+    lines += ["", "Recent news (headline, then the article summary):"]
     if dossier.news:
         for item in dossier.news:
-            lines.append(
-                f"- {item.published_at:%Y-%m-%d} · {item.source} · {item.headline}\n  {item.url}"
-            )
+            lines.append(f"- {item.published_at:%Y-%m-%d} · {item.source} · {item.headline}")
+            if item.summary:
+                lines.append(f"  {item.summary}")
     else:
         lines.append("- (no recent news)")
 

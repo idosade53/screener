@@ -1,7 +1,8 @@
-"""F6 AnthropicSummaryProvider — no network. The injected ``create_message_fn`` stands in for the
-SDK: we assert the prompt payload carries the structured facts + news URLs (and omits missing
-metrics), that a single call returns its text, that a ``pause_turn`` turn is resumed exactly once,
-and that any SDK/transport error is normalised to ``ProviderError`` (the port's failure signal)."""
+"""AnthropicSummaryProvider — no network (F6, reworked in F7T01). The injected ``create_message_fn``
+stands in for the SDK: we assert the prompt payload carries the structured facts + each news item's
+summary (and omits missing metrics), that a single call with no web-fetch tool returns its text,
+that ``_extract_text`` returns only the final read, and that any SDK/transport error is normalised
+to ``ProviderError`` (the port's failure signal)."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import pytest
 
 from screener.adapters.summary.anthropic_provider import (
     AnthropicSummaryProvider,
+    _extract_text,
     _render_dossier_facts,
 )
 from screener.domain.errors import ProviderError
@@ -127,12 +129,12 @@ def _news_item() -> NewsItem:
         source="Reuters",
         headline="Apple unveils new chip",
         url="https://example.com/apple-chip",
-        summary=None,
+        summary="Apple announced its next-generation M-series chip. (sentiment: Bullish)",
     )
 
 
 # ------------------------------------------------------------------------- tests
-def test_render_includes_facts_and_news_urls_and_omits_missing_metrics() -> None:
+def test_render_includes_facts_and_news_summaries_and_omits_missing_metrics() -> None:
     rendered = _render_dossier_facts(_dossier(news=(_news_item(),)))
 
     # Scorecard flags + the driving values.
@@ -144,16 +146,17 @@ def test_render_includes_facts_and_news_urls_and_omits_missing_metrics() -> None
     # Missing metrics are dropped, not rendered as n/a.
     assert "P/E fwd" not in rendered
     assert "Net margin" not in rendered
-    # News headline *and* URL are handed over so web-fetch can open the article.
+    # News headline *and* its summary text are handed over (F7T01 — the substance, not just a URL).
     assert "Apple unveils new chip" in rendered
-    assert "https://example.com/apple-chip" in rendered
+    assert "next-generation M-series chip" in rendered
+    assert "(sentiment: Bullish)" in rendered
 
 
 def test_no_news_renders_placeholder() -> None:
     assert "(no recent news)" in _render_dossier_facts(_dossier())
 
 
-def test_summarize_returns_text_in_one_call() -> None:
+def test_summarize_returns_text_in_one_call_without_web_fetch() -> None:
     fake = _FakeCreate(_Message(content=[_Block("text", "Strengths: strong margins.\nNet: fine.")]))
     provider = AnthropicSummaryProvider("key", create_message_fn=fake)
 
@@ -161,23 +164,20 @@ def test_summarize_returns_text_in_one_call() -> None:
 
     assert out == "Strengths: strong margins.\nNet: fine."
     assert len(fake.calls) == 1
-    # The web-fetch tool is offered so Claude can read the article behind the link.
-    assert fake.calls[0]["tools"][0]["name"] == "web_fetch"
+    # F7T01: web-fetch is gone — no tools offered, and a larger token budget for the read.
+    assert "tools" not in fake.calls[0]
+    assert fake.calls[0]["max_tokens"] == 1500
 
 
-def test_pause_turn_is_resumed_once_then_completes() -> None:
-    paused = _Message(content=[_Block("server_tool_use", "")], stop_reason="pause_turn")
-    done = _Message(content=[_Block("text", "News: nothing critical.")])
-    fake = _FakeCreate(paused, done)
-    provider = AnthropicSummaryProvider("key", create_message_fn=fake)
-
-    out = provider.summarize(_dossier(news=(_news_item(),)))
-
-    assert out == "News: nothing critical."
-    assert len(fake.calls) == 2
-    # The resume echoes the paused assistant turn back so the server tool loop continues.
-    assert fake.calls[1]["messages"][-1]["role"] == "assistant"
-    assert fake.calls[1]["messages"][-1]["content"] == paused.content
+def test_extract_text_returns_only_the_final_read() -> None:
+    # A response with leading narration then the read must yield only the last text block.
+    response = _Message(
+        content=[
+            _Block("text", "Let me look at the news...  "),
+            _Block("text", "Strengths: solid.\nNet: balanced."),
+        ]
+    )
+    assert _extract_text(response) == "Strengths: solid.\nNet: balanced."
 
 
 def test_api_error_becomes_provider_error() -> None:
