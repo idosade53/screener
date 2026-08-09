@@ -160,11 +160,14 @@ def _build_news(cfg: Settings) -> tuple[NewsProvider, NewsProvider | None]:
 def build_bot_context(app: Application) -> BotContext:
     """Narrow the composition-root ``Application`` down to what a bot handler may touch
     (M5). This is the seam the M7 long-poll loop injects into ``bot.dispatch.dispatch``."""
+    def build_dossier(symbol: str, with_ai: bool | None = None) -> Dossier:
+        # A per-call override (``/dossier --ai`` / ``--no-ai``); ``None`` uses the settings default.
+        effective = app.settings.dossier_ai_summary if with_ai is None else with_ai
+        return app.build_dossier(symbol, with_ai=effective)
+
     return BotContext(
         repo=app.repo,
         settings=app.settings,
         run_scan=lambda: app.pipeline().run(ScanType.MANUAL),
-        build_dossier=lambda symbol: app.build_dossier(
-            symbol, with_ai=app.settings.dossier_ai_summary
-        ),
+        build_dossier=build_dossier,
     )

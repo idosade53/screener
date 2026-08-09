@@ -24,7 +24,7 @@ HELP_TEXT = (
     "/remove SYM [SYM …] — remove symbols\n"
     "/status — last scan summary\n"
     "/scan — run a manual scan now\n"
-    "/dossier SYM (alias /dd) — fundamentals + news dossier\n"
+    "/dossier SYM [--ai|--no-ai] (alias /dd) — fundamentals + news dossier\n"
     "/help — this message"
 )
 
@@ -111,14 +111,27 @@ def cmd_scan(args: list[str], ctx: BotContext) -> str:
 
 
 def cmd_dossier(args: list[str], ctx: BotContext) -> str:
-    if not args:
-        return "Usage: /dossier SYM"
-    result = normalise(args[:1])
+    # A per-call AI toggle mirroring the CLI ``--ai`` flag. ``--no-ai`` forces it off; when neither
+    # is given ``with_ai`` stays ``None`` and the composition root applies the settings default.
+    with_ai: bool | None = None
+    symbol_args: list[str] = []
+    for arg in args:
+        flag = arg.lower().lstrip("-")
+        if flag in ("ai",):
+            with_ai = True
+        elif flag in ("no-ai", "noai"):
+            with_ai = False
+        else:
+            symbol_args.append(arg)
+
+    if not symbol_args:
+        return "Usage: /dossier SYM [--ai|--no-ai]"
+    result = normalise(symbol_args[:1])
     if not result.valid:
-        return f"Invalid symbol: {', '.join(result.invalid) or args[0]}"
+        return f"Invalid symbol: {', '.join(result.invalid) or symbol_args[0]}"
     symbol = result.valid[0]
     try:
-        dossier = ctx.build_dossier(symbol)
+        dossier = ctx.build_dossier(symbol, with_ai)
     except UnknownSymbolError:
         return f"Unknown symbol: {symbol}. Check the ticker and try again."
     return format_dossier(dossier)

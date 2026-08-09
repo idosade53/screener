@@ -21,4 +21,6 @@ class BotContext:
     run_scan: Callable[[], ScanSummary]  # triggers a MANUAL scan; the pipeline sends its own digest
     # Builds an on-demand fundamentals dossier (F5). Injected by the composition root so the bot
     # layer stays clear of adapters; may raise UnknownSymbolError for a friendly rejection.
-    build_dossier: Callable[[str], Dossier]
+    # ``with_ai`` overrides the AI-summary stage for this call (``/dossier --ai`` / ``--no-ai``);
+    # ``None`` falls back to the ``dossier_ai_summary`` setting.
+    build_dossier: Callable[[str, bool | None], Dossier]

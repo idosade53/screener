@@ -47,7 +47,7 @@ def ctx(settings: Settings) -> BotContext:
         repo=repo,
         settings=settings,
         run_scan=lambda: None,  # type: ignore[arg-type,return-value]
-        build_dossier=lambda _s: None,  # type: ignore[arg-type,return-value]
+        build_dossier=lambda _s, _ai=None: None,  # type: ignore[arg-type,return-value]
     )
 
 

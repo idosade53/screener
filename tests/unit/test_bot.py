@@ -28,7 +28,7 @@ from screener.domain.models import (
 CHAT = "123456"
 
 
-def _fake_dossier(symbol: str) -> Dossier:
+def _fake_dossier(symbol: str, with_ai: bool | None = None) -> Dossier:
     if symbol == "NOPE":
         raise UnknownSymbolError(symbol)
     now = datetime(2026, 8, 7, 20, 15, tzinfo=UTC)
@@ -277,3 +277,31 @@ def test_dossier_without_args_shows_usage(ctx: BotContext) -> None:
 
 def test_dossier_from_unauthorized_chat_is_ignored(ctx: BotContext) -> None:
     assert dispatch(_update("/dossier aapl", chat="999"), ctx) is None
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("/dossier aapl", None),
+        ("/dossier aapl --ai", True),
+        ("/dossier --ai aapl", True),
+        ("/dossier aapl --no-ai", False),
+        ("/dd aapl --ai", True),
+    ],
+)
+def test_dossier_ai_flag_is_threaded_through(
+    repo: SqliteScreenerRepository,
+    settings: Settings,
+    scanner: _Scanner,
+    text: str,
+    expected: bool | None,
+) -> None:
+    seen: list[bool | None] = []
+
+    def spy(symbol: str, with_ai: bool | None = None) -> Dossier:
+        seen.append(with_ai)
+        return _fake_dossier(symbol, with_ai)
+
+    ctx = BotContext(repo=repo, settings=settings, run_scan=scanner, build_dossier=spy)
+    dispatch(_update(text), ctx)
+    assert seen == [expected]
