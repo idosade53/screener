@@ -13,35 +13,37 @@ import pytest
 from screener.adapters.fundamentals.fmp_provider import FmpFundamentalsProvider
 from screener.domain.errors import ProviderError
 
+# Recorded frames use the FMP `stable` schema (query-param `symbol=`, renamed fields). The adapter
+# also tolerates the older v3 names via `_pick`, but we record what the live API now returns.
 _PROFILE = [
     {
         "symbol": "AAPL",
         "companyName": "Apple Inc.",
         "sector": "Technology",
         "industry": "Consumer Electronics",
-        "mktCap": 3200000000000,
+        "marketCap": 3200000000000,
         "currency": "USD",
-        "exchangeShortName": "NASDAQ",
+        "exchange": "NASDAQ",
     }
 ]
 _RATIOS = [
     {
-        "peRatioTTM": 30.5,
-        "priceEarningsToGrowthRatioTTM": 2.1,
+        "priceToEarningsRatioTTM": 30.5,
+        "priceToEarningsGrowthRatioTTM": 2.1,
         "priceToSalesRatioTTM": 8.2,
         "priceToBookRatioTTM": 45.0,
         "grossProfitMarginTTM": 0.44,
         "operatingProfitMarginTTM": 0.30,
         "netProfitMarginTTM": 0.25,
         "returnOnEquityTTM": 1.5,
-        "debtEquityRatioTTM": 1.8,
+        "debtToEquityRatioTTM": 1.8,
         "currentRatioTTM": 0.95,
-        "interestCoverageTTM": 28.0,
+        "interestCoverageRatioTTM": 28.0,
     }
 ]
 _METRICS = [
     {
-        "enterpriseValueOverEBITDATTM": 24.0,
+        "evToEBITDATTM": 24.0,
         "netDebtToEBITDATTM": 0.5,
         "freeCashFlowPerShareTTM": 6.4,
         "forwardPETTM": 27.0,
@@ -74,13 +76,16 @@ class FakeHttp:
 
 
 def _frames() -> dict[str, Any]:
+    # Keys are URL substrings; stable paths are the bare resource name (symbol is a query param).
+    # `key-metrics-ttm` is listed before `ratios-ttm` so the longer, more specific match is tried
+    # first (neither is a substring of the other, but order-independence is cheap insurance).
     return {
-        "profile/": _PROFILE,
-        "ratios-ttm/": _RATIOS,
-        "key-metrics-ttm/": _METRICS,
-        "income-statement/": _INCOME,
-        "price-target-consensus/": _TARGET,
-        "historical/earning_calendar/": _EARNINGS,
+        "profile": _PROFILE,
+        "key-metrics-ttm": _METRICS,
+        "ratios-ttm": _RATIOS,
+        "income-statement": _INCOME,
+        "price-target-consensus": _TARGET,
+        "earnings": _EARNINGS,
     }
 
 
@@ -123,18 +128,27 @@ def test_fetch_fundamentals_normalises_to_decimal() -> None:
 
 
 def test_absent_sections_become_none_not_error() -> None:
-    # Only the profile responds; every other endpoint returns empty.
-    prov = _provider(FakeHttp({"profile/": _PROFILE}))
+    # Partial: profile + ratios respond; the other scored endpoints return empty. Because *some*
+    # scored data is present, the snapshot builds and the absent sections degrade to None.
+    prov = _provider(FakeHttp({"profile": _PROFILE, "ratios-ttm": _RATIOS}))
     snap = prov.fetch_fundamentals("AAPL")
-    assert snap.pe_ttm is None
-    assert snap.net_margin is None
-    assert snap.mean_target is None
-    assert snap.next_earnings_date is None
+    assert snap.pe_ttm == Decimal("30.5")  # from ratios
+    assert snap.ev_ebitda is None  # key-metrics absent
+    assert snap.mean_target is None  # price-target absent
+    assert snap.next_earnings_date is None  # earnings absent
+
+
+def test_profile_only_no_scored_data_raises() -> None:
+    # Free-tier FMP serves only /stable/profile (scored endpoints are HTTP 402). A profile with no
+    # scored data must raise so the assembler falls back to yfinance (F7T02 follow-up).
+    prov = _provider(FakeHttp({"profile": _PROFILE}))
+    with pytest.raises(ProviderError):
+        prov.fetch_fundamentals("AAPL")
 
 
 def test_partial_outage_degrades_ratios_to_none() -> None:
     # Ratios endpoint raises; the rest still map (graceful degradation, SC-4).
-    http = FakeHttp(_frames(), raise_on={"ratios-ttm/"})
+    http = FakeHttp(_frames(), raise_on={"ratios-ttm"})
     snap = _provider(http).fetch_fundamentals("AAPL")
     assert snap.pe_ttm is None  # came from the failed ratios call
     assert snap.ev_ebitda == Decimal("24")  # key-metrics still worked
@@ -143,9 +157,21 @@ def test_partial_outage_degrades_ratios_to_none() -> None:
 
 def test_total_outage_raises_provider_error() -> None:
     # No profile at all -> signal a fallback to the assembler.
-    http = FakeHttp({}, raise_on={"profile/"})
+    http = FakeHttp({}, raise_on={"profile"})
     with pytest.raises(ProviderError):
         _provider(http).fetch_fundamentals("AAPL")
+
+
+def test_error_payload_raises_provider_error() -> None:
+    # FMP free-tier over-quota / bad-key: HTTP 200 with an {"Error Message": …} body (F7T02). The
+    # adapter must treat it as a miss so ProviderError fires and the yfinance fallback can serve.
+    err = {"Error Message": "Special Endpoint : is not available under your current subscription"}
+    http = FakeHttp({"profile": err, "ratios-ttm": err})
+    with pytest.raises(ProviderError):
+        _provider(http).fetch_profile("AAPL")
+    with pytest.raises(ProviderError):
+        _provider(http).fetch_fundamentals("AAPL")
+    assert _provider(FakeHttp({"profile": err})).validate_symbol("AAPL") is False
 
 
 def test_validate_symbol() -> None:

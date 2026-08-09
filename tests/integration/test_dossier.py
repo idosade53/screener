@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from screener.adapters.fundamentals.fmp_provider import FmpFundamentalsProvider
 from screener.adapters.repository.sqlite_repository import SqliteScreenerRepository
 from screener.domain.errors import ProviderError, UnknownSymbolError
 from screener.domain.models import CompanyProfile, Dossier, FundamentalsSnapshot, NewsItem
@@ -162,6 +163,33 @@ def test_primary_outage_degrades_to_fallback(repo: SqliteScreenerRepository) -> 
     assert dossier.news[0].headline == "AAPL beats estimates"
     notes = " ".join(dossier.notes)
     assert "fallback" in notes  # both footer notes mention the fallback
+
+
+def test_real_fmp_403_error_body_degrades_to_fallback(repo: SqliteScreenerRepository) -> None:
+    # F7T02 end-to-end: the *real* FMP adapter, fed an {"Error Message": …} body (the free-tier
+    # 403 shape), must raise ProviderError so the assembler serves fundamentals from yfinance.
+    err = {"Error Message": "not available under your current subscription"}
+    fmp = FmpFundamentalsProvider(
+        "KEY",
+        http_get_fn=lambda _u, _p, _t: err,
+        retries=1,
+        sleep_fn=lambda _s: None,
+    )
+    fallback = FakeFundamentalsProvider(source="fake-yf")
+    fallback.seed(_profile("AAPL"), _snapshot("AAPL", source="fake-yf"))
+    news = FakeNewsProvider()
+    news.seed("AAPL", _news("AAPL"))
+    svc = DossierService(
+        repo=repo,
+        fundamentals=fmp,
+        fundamentals_fallback=fallback,
+        news=news,
+        clock=FrozenClock(_NOW),
+    )
+
+    dossier = svc.build("AAPL")
+    assert dossier.snapshot.source == "fake-yf"
+    assert any("fallback" in n for n in dossier.notes)
 
 
 def test_double_news_outage_is_partial_not_fatal(repo: SqliteScreenerRepository) -> None:
