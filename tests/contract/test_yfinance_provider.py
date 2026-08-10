@@ -154,6 +154,52 @@ def test_empty_symbol_list_short_circuits() -> None:
     assert result.bars == {} and result.failures == {}
 
 
+def _chunk_frame(symbols: list[str]) -> pd.DataFrame:
+    return _multi_frame(
+        {s: [("2026-08-06", 100.0, 101.0, 99.0, 100.5, 10)] for s in symbols}
+    )
+
+
+def test_universe_is_downloaded_in_batches_with_pauses_between_them() -> None:
+    seen_chunks: list[list[str]] = []
+    pauses: list[float] = []
+
+    def download(symbols: list[str], _a: date, _b: date) -> pd.DataFrame:
+        seen_chunks.append(list(symbols))
+        return _chunk_frame(symbols)
+
+    provider = YFinanceProvider(
+        download_fn=download, batch_size=2, batch_pause=1.5, sleep_fn=pauses.append
+    )
+    result = provider.fetch_daily_bars(
+        ["AAPL", "KO", "MSFT", "META", "NVDA"], date(2026, 8, 1), date(2026, 8, 6)
+    )
+
+    # 5 symbols in batches of 2 -> three requests, each seeing only its own slice.
+    assert seen_chunks == [["AAPL", "KO"], ["MSFT", "META"], ["NVDA"]]
+    assert set(result.bars) == {"AAPL", "KO", "MSFT", "META", "NVDA"}
+    # A pause between each pair of batches (two gaps), never before the first.
+    assert pauses == [1.5, 1.5]
+
+
+def test_one_throttled_batch_fails_only_its_own_symbols() -> None:
+    def download(symbols: list[str], _a: date, _b: date) -> pd.DataFrame:
+        # The second batch (MSFT/META) is throttled: Yahoo returns an empty frame.
+        if "MSFT" in symbols:
+            return pd.DataFrame()
+        return _chunk_frame(symbols)
+
+    provider = YFinanceProvider(
+        download_fn=download, batch_size=2, retries=2, sleep_fn=lambda _: None
+    )
+    result = provider.fetch_daily_bars(
+        ["AAPL", "KO", "MSFT", "META"], date(2026, 8, 1), date(2026, 8, 6)
+    )
+
+    assert set(result.bars) == {"AAPL", "KO"}  # healthy batch still delivered
+    assert set(result.failures) == {"MSFT", "META"}  # throttled batch only
+
+
 class _FakeFastInfo:
     def __init__(self, last_price: float | None) -> None:
         self._p = last_price

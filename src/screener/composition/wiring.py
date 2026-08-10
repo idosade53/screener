@@ -109,7 +109,10 @@ def build_application(settings: Settings | None = None) -> Application:
     return Application(
         settings=cfg,
         repo=repo,
-        provider=YFinanceProvider(),
+        provider=YFinanceProvider(
+            batch_size=cfg.market_data_batch_size,
+            batch_pause=cfg.market_data_batch_pause_seconds,
+        ),
         calendar=XnysCalendar(),
         clock=clock,
         notifier=notifier,

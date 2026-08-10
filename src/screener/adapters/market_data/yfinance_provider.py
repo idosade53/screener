@@ -9,6 +9,7 @@ Network calls go through two injectable seams — ``download_fn`` (bars) and ``t
 from __future__ import annotations
 
 import math
+import random
 import time
 from collections.abc import Callable
 from datetime import date, timedelta
@@ -61,15 +62,19 @@ class YFinanceProvider:
         self,
         download_fn: Callable[[list[str], date, date], pd.DataFrame] = _default_download,
         ticker_fn: Callable[[str], _TickerLike] = _default_ticker,
-        retries: int = 3,
-        backoff_base: float = 0.5,
+        retries: int = 4,
+        backoff_base: float = 1.0,
         sleep_fn: Callable[[float], None] = time.sleep,
+        batch_size: int = 10,
+        batch_pause: float = 1.0,
     ) -> None:
         self._download_fn = download_fn
         self._ticker_fn = ticker_fn
         self._retries = retries
         self._backoff_base = backoff_base
         self._sleep = sleep_fn
+        self._batch_size = max(1, batch_size)
+        self._batch_pause = batch_pause
 
     # ---------------------------------------------------------------- daily bars
     def fetch_daily_bars(
@@ -78,15 +83,37 @@ class YFinanceProvider:
         if not symbols:
             return BarFetchResult()
 
-        raw = self._with_retries(lambda: self._download_fn(symbols, start, end))
-        if raw is None:
-            # Whole batch failed after retries — every symbol is a failure, not an exception.
-            return BarFetchResult(failures={s: "batch download failed" for s in symbols})
-
-        per_symbol = self._split_by_symbol(raw, symbols)
         bars: dict[str, list[Bar]] = {}
         failures: dict[str, str] = {}
-        for sym in symbols:
+        # Download in small batches with a pause between them: Yahoo throttles a single
+        # whole-universe request from a datacenter IP, so a throttled batch fails only its own
+        # symbols instead of the entire scan (driver D2).
+        for index, chunk in enumerate(self._chunk(symbols)):
+            if index > 0 and self._batch_pause > 0:
+                self._sleep(self._batch_pause)
+            self._fetch_chunk(chunk, start, end, bars, failures)
+        return BarFetchResult(bars=bars, failures=failures)
+
+    def _chunk(self, symbols: list[str]) -> list[list[str]]:
+        size = self._batch_size
+        return [symbols[i : i + size] for i in range(0, len(symbols), size)]
+
+    def _fetch_chunk(
+        self,
+        chunk: list[str],
+        start: date,
+        end: date,
+        bars: dict[str, list[Bar]],
+        failures: dict[str, str],
+    ) -> None:
+        raw = self._with_retries(lambda: self._download_fn(chunk, start, end))
+        if raw is None:
+            # The whole batch failed after retries — every symbol is a failure, not an exception.
+            failures.update({s: "batch download failed" for s in chunk})
+            return
+
+        per_symbol = self._split_by_symbol(raw, chunk)
+        for sym in chunk:
             df = per_symbol.get(sym)
             if df is None or df.empty:
                 failures[sym] = "no data returned"
@@ -96,7 +123,6 @@ class YFinanceProvider:
                 bars[sym] = sym_bars
             else:
                 failures[sym] = "no complete bars in range"
-        return BarFetchResult(bars=bars, failures=failures)
 
     def _split_by_symbol(
         self, raw: pd.DataFrame, symbols: list[str]
@@ -196,5 +222,8 @@ class YFinanceProvider:
             ):
                 return result
             if attempt < self._retries - 1:
-                self._sleep(self._backoff_base * (2**attempt))
+                # Exponential backoff with jitter so retried batches don't hammer Yahoo in
+                # lockstep and re-trip the same rate limit.
+                wait = self._backoff_base * (2**attempt)
+                self._sleep(wait + random.uniform(0.0, self._backoff_base))
         return None

@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     provider: Literal["yfinance"] = "yfinance"
     db_path: str = "screener.db"
 
+    # yfinance is throttled when the whole universe is downloaded in one request from a
+    # datacenter IP (driver D2). Fetch bars in small batches, pausing between them, so Yahoo
+    # rate-limits at most one batch instead of the entire scan.
+    market_data_batch_size: int = 10
+    market_data_batch_pause_seconds: float = 1.0
+
     # DynamoDB backend (architecture §9.3 single table). Only read when
     # repository_backend == "dynamodb"; region falls back to the standard AWS env vars.
     dynamodb_table: str = "screener"
